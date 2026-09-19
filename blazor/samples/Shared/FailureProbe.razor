@@ -1,0 +1,28 @@
+@namespace DrawingWeb.Samples
+@using DrawingWeb.Blazor
+@inject Microsoft.AspNetCore.Components.NavigationManager Navigation
+<details>
+    <summary>Initialization failure and recovery test</summary>
+    <p>This probe deliberately rejects native creation. It must report one error, survive parent renders, and dispose without damaging the other editors.</p>
+    <button id="probe-start" type="button" @onclick="Start" disabled="@_visible">Run failure probe</button>
+    <button id="probe-render" type="button" @onclick="Rerender" disabled="@(!_visible)">Render parent again</button>
+    <button id="probe-remove" type="button" @onclick="Remove" disabled="@(!_visible)">Remove failed control</button>
+    <span id="probe-count">@_errors</span><span id="probe-ready">@_unexpectedReady</span>
+    <p id="probe-message">@_message</p>
+    @if (_visible)
+    {
+        <DrawingEditor ModulePath="@ModuleUrl" Height="130px" ShowToolbar="false"
+                       AriaLabel="@($"Failure probe {_renders}")" Error="Failed" Ready="UnexpectedReady" />
+    }
+</details>
+@code {
+    private bool _visible, _unexpectedReady;
+    private int _errors, _renders;
+    private string _message = "";
+    private string ModuleUrl => new Uri(new Uri(Navigation.BaseUri), "failure-probe.js").AbsoluteUri;
+    private void Start() { _visible = true; _errors = 0; _unexpectedReady = false; _message = ""; }
+    private void Rerender() => _renders++;
+    private void Remove() => _visible = false;
+    private void UnexpectedReady() => _unexpectedReady = true;
+    private void Failed(DrawingErrorEvent error) { _errors++; _message = error.Code + ": " + error.Message; }
+}

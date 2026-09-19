@@ -44,13 +44,12 @@ def exercise(browser, name, url):
     page = context.new_page()
     diagnostic = {"host": name, "url": url, "errors": [], "console": [], "failedRequests": [], "httpErrors": [], "externalRequests": []}
     page.on("pageerror", lambda error: diagnostic["errors"].append(str(error)))
-    page.on("console", lambda message: diagnostic["console"].append({"type": message.type, "text": message.text[:8000]}) if len(diagnostic["console"]) < 200 else None)
+    page.on("console", lambda message: diagnostic["console"].append({"type": message.type, "text": message.text[:8000]}) if len(diagnostic["console"]) < 40 else None)
     page.on("requestfailed", lambda request: diagnostic["failedRequests"].append({"url": request.url, "failure": request.failure}))
     page.on("response", lambda response: diagnostic["httpErrors"].append({"url": response.url, "status": response.status}) if response.status >= 400 else None)
     page.on("request", lambda request: diagnostic["externalRequests"].append(request.url) if request.url.startswith("http") and urlsplit(request.url).hostname != "127.0.0.1" else None)
     try:
         page.goto(url)
-        # An explicit startup error should fail immediately, not become a two-minute timeout.
         page.wait_for_function("""() => {
             const state = document.getElementById('ready-state')?.textContent;
             const error = document.getElementById('error')?.textContent?.trim();
@@ -68,8 +67,12 @@ def exercise(browser, name, url):
         page.wait_for_function("document.getElementById('json-preview').textContent.length>1024*1024", timeout=60000)
         page.locator("#add-shape").click()
         page.wait_for_function("document.getElementById('json-preview').textContent.includes('C# command')", timeout=60000)
+        # Exercise a real InputBase edit, not just validation of its initial value.
+        page.locator("form").get_by_role("button", name="Process", exact=False).click()
         page.locator("#save-form").click()
         page.wait_for_function("document.getElementById('form-status').textContent.startsWith('Valid')", timeout=30000)
+        if "modified=True" not in page.locator("#form-status").inner_text():
+            raise AssertionError("EditForm was not notified of the native edit")
         count = page.locator('canvas[role="application"]').count()
         page.locator("#toggle-editor").click()
         page.wait_for_function("document.querySelectorAll('canvas[role=application]').length===" + str(count - 1))
@@ -77,13 +80,28 @@ def exercise(browser, name, url):
         page.wait_for_function("document.getElementById('ready-state')?.textContent==='Ready'", timeout=60000)
         if page.locator('canvas[role="application"]').count() != count:
             raise AssertionError("Native control was not recreated")
+        # A synchronous create failure must notify once and never recurse on render.
+        page.get_by_text("Initialization failure and recovery test", exact=True).click()
+        page.locator("#probe-start").click()
+        page.wait_for_function("document.getElementById('probe-count').textContent==='1'", timeout=30000)
+        for _ in range(4):
+            page.locator("#probe-render").click()
+        if page.locator("#probe-count").inner_text() != "1" or page.evaluate("globalThis.drawingwebFailureProbeAttempts") != 1:
+            raise AssertionError("Failed initialization was retried during parent renders")
+        if page.locator("#probe-ready").inner_text() != "False":
+            raise AssertionError("A failed control signalled Ready")
+        if "INITIALIZATION: Intentional lifecycle probe failure" not in page.locator("#probe-message").inner_text():
+            raise AssertionError("Initialization failure was not reported accurately")
+        page.locator("#probe-remove").click()
+        page.wait_for_function("document.getElementById('probe-start').disabled===false")
+        page.locator("#add-shape").click()
         if page.locator("#error").inner_text().strip():
             raise AssertionError(page.locator("#error").inner_text())
-        if diagnostic["errors"] or diagnostic["externalRequests"]:
-            raise AssertionError("Uncaught browser error or unexpected external dependency")
+        if diagnostic["errors"] or diagnostic["externalRequests"] or any(item["type"] == "error" for item in diagnostic["console"]):
+            raise AssertionError("Uncaught browser error, console error or unexpected external dependency")
         page.screenshot(path=str(OUT / (name + ".png")), full_page=True)
-        results.append({"host": name, "integration": outcome, "largeStream": True, "editForm": True, "remount": True, "externalRequests": diagnostic["externalRequests"]})
-        print("PASS package-restored " + name + " integration, large stream, EditForm and remount", flush=True)
+        results.append({"host": name, "integration": outcome, "largeStream": True, "editFormModified": True, "remount": True, "failureLifecycle": True, "externalRequests": diagnostic["externalRequests"]})
+        print("PASS package-restored " + name + " integration, large stream, EditForm, remount and failure lifecycle", flush=True)
     except Exception as error:
         diagnostic["failure"] = str(error)
         try:

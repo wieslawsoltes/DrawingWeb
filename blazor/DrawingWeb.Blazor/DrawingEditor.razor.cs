@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.ExceptionServices;
 using System.Text;
 using System.Text.Json;
@@ -55,7 +56,8 @@ public partial class DrawingEditor : ComponentBase, IAsyncDisposable
     private Task? _initializeTask, _renderTask, _disposeTask;
     private readonly CancellationTokenSource _lifetime = new();
     private readonly SemaphoreSlim _snapshotGate = new(1, 1);
-    private bool _disposed, _readyNotified;
+    private bool _disposed, _readyNotified, _rendering, _initializationFailed;
+    private string? _reportedRenderFailure;
     private readonly CancellationToken _token;
     private string? _lastTypedEmission;
     public DrawingEditor() { _token = _lifetime.Token; }
@@ -74,9 +76,13 @@ public partial class DrawingEditor : ComponentBase, IAsyncDisposable
     }
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (_disposed || _renderTask is { IsCompleted: false }) return;
-        _renderTask = RenderWorkAsync();
-        await _renderTask;
+        if (_disposed || _initializationFailed || _rendering) return;
+        if (_readyNotified && _appliedStamp == _parameterStamp) return;
+        // Guard BEFORE invoking an async method: on WASM every awaited operation
+        // may complete synchronously, including Error callbacks and parent renders.
+        _rendering = true;
+        try { _renderTask = RenderWorkAsync(); await _renderTask; }
+        finally { _rendering = false; }
     }
     private async Task RenderWorkAsync()
     {
@@ -96,12 +102,13 @@ public partial class DrawingEditor : ComponentBase, IAsyncDisposable
                     if (bytes.LongLength > MaxDocumentBytes) throw new InvalidOperationException("The document exceeds MaxDocumentBytes.");
                     using var data = new MemoryStream(bytes, writable: false);
                     using var reference = new DotNetStreamReference(data, leaveOpen: true);
-                    var result = await _module.InvokeAsync<WriteResult>("setValueFromStream", _token, _handle, reference, _browserRevision, version, MaxDocumentBytes);
+                    var payload = await _module!.InvokeAsync<JsonElement>("setValueFromStream", _token, _handle, reference, _browserRevision, version, MaxDocumentBytes);
+                    var result = payload.Deserialize(DrawingInteropJsonContext.Default.WriteResult) ?? throw new JsonException("Missing write result.");
                     if (result.Applied) { _browserRevision = result.Revision; _snapshotJson = input; _lastRowsInput = null; _lastRowsEmitted = null; }
                     else await ReportAsync("REVISION_CONFLICT", "An external value was rejected because newer browser edits exist. Increase ValueRevision to force an intentional replacement.");
                     _lastInput = input; _appliedValueRevision = version;
                 }
-                await _module!.InvokeVoidAsync("setOptions", _token, _handle, new { readOnly = ReadOnly, grid = Grid, snap = Snap, gridSize = GridSize, pageId = PageId, ariaLabel = AriaLabel });
+                await _module!.InvokeVoidAsync("setOptions", _token, _handle, DrawingInterop.Options(ReadOnly, Grid, Snap, GridSize, AriaLabel, PageId));
                 if (RowsJson is not null && Bindings is not null)
                 {
                     var mappingKey = KeyField + "|" + TwoWayDataBinding + "|" + string.Join("|", Bindings.OrderBy(p => p.Key).Select(p => p.Key + "=" + p.Value));
@@ -114,11 +121,25 @@ public partial class DrawingEditor : ComponentBase, IAsyncDisposable
                 }
                 _appliedStamp = stamp;
             }
+            _reportedRenderFailure = null;
             if (!_disposed && !_readyNotified) { _readyNotified = true; await Ready.InvokeAsync(); if (!_disposed) await InvokeAsync(StateHasChanged); }
         }
         catch (OperationCanceledException) when (_disposed) { }
         catch (JSDisconnectedException) when (_disposed) { }
-        catch (Exception error) { if (!_disposed) await ReportAsync("INITIALIZATION", error.Message); }
+        catch (Exception error)
+        {
+            if (_disposed) return;
+            // A cached failed initialization is terminal for this instance. Report
+            // it once; do not retry from the render caused by the Error callback.
+            _initializationFailed = _initializeTask is { IsFaulted: true };
+            if (_initializationFailed) IsReady = false;
+            _appliedStamp = _parameterStamp;
+            if (_reportedRenderFailure != error.Message)
+            {
+                _reportedRenderFailure = error.Message;
+                await ReportAsync(_initializationFailed ? "INITIALIZATION" : "PARAMETER_UPDATE", error.Message);
+            }
+        }
     }
     private async Task InitializeAsync()
     {
@@ -126,11 +147,11 @@ public partial class DrawingEditor : ComponentBase, IAsyncDisposable
         _module = await JS.InvokeAsync<IJSObjectReference>("import", path);
         if (_disposed) return;
         _callback = DotNetObjectReference.Create(this);
-        var created = await _module.InvokeAsync<CreateResult>("create", _host, _callback, new { readOnly = ReadOnly, grid = Grid, snap = Snap, gridSize = GridSize, ariaLabel = AriaLabel });
+        var payload = await _module.InvokeAsync<JsonElement>("create", _host, _callback, DrawingInterop.Options(ReadOnly, Grid, Snap, GridSize, AriaLabel));
+        var created = payload.Deserialize(DrawingInteropJsonContext.Default.CreateResult) ?? throw new JsonException("Missing native handle.");
         _handle = created.Id; _browserRevision = created.Revision;
         if (_disposed) return;
         IsReady = true;
-
     }
     private void EnsureReady()
     {
@@ -138,6 +159,7 @@ public partial class DrawingEditor : ComponentBase, IAsyncDisposable
         if (!IsReady || _module is null || _handle is null) throw new InvalidOperationException("Wait for the DrawingEditor.Ready callback before using the native editor.");
     }
     [JSInvokable] public Task OnDocumentChanged(long revision) => _disposed ? Task.CompletedTask : ReceiveSnapshotAsync(revision);
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor, typeof(StreamSnapshot))]
     private async Task ReceiveSnapshotAsync(long minimumRevision, bool forceRead = false)
     {
         if (_disposed || !IsReady) return;
@@ -184,6 +206,7 @@ public partial class DrawingEditor : ComponentBase, IAsyncDisposable
         await SelectionChanged.InvokeAsync(selection);
     }
     [JSInvokable] public Task OnNativeError(string code, string message) => _disposed ? Task.CompletedTask : ReportAsync(code, message);
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor, typeof(StreamSnapshot))]
     [JSInvokable] public async Task OnDataChanged(long revision)
     {
         if (_disposed || (!DataChanged.HasDelegate && !RowsJsonChanged.HasDelegate)) return;
@@ -218,14 +241,15 @@ public partial class DrawingEditor : ComponentBase, IAsyncDisposable
     public Task UndoAsync() => ExecuteAsync("undo");
     public Task RedoAsync() => ExecuteAsync("redo");
     public Task SelectAsync(params string[] ids) => ExecuteAsync("select", (object)ids);
+    /// <summary>Executes a native command with JSON values, collections or DrawingWeb models. Serialize custom DTOs to JsonElement using caller-owned JsonTypeInfo.</summary>
     public async Task ExecuteAsync(string command, params object?[] arguments)
     {
-        EnsureReady(); await _module!.InvokeVoidAsync("command", _token, _handle, command, arguments);
+        EnsureReady(); await _module!.InvokeVoidAsync("command", _token, _handle, command, DrawingInterop.Arguments(arguments));
     }
     public async Task<string> AddShapeAsync(string kind, double? x = null, double? y = null, string? text = null)
     {
         EnsureReady(); object? point = x.HasValue && y.HasValue ? new DrawingPoint(x.Value, y.Value) : null;
-        return await _module!.InvokeAsync<string>("command", _token, _handle, "add", new object?[] { kind, point, text });
+        return await _module!.InvokeAsync<string>("command", _token, _handle, "add", DrawingInterop.Arguments([kind, point, text]));
     }
     public Task UpdateShapeAsync(string id, Dictionary<string, JsonElement> patch) => ExecuteAsync("update", id, patch);
     public async Task<DrawingImport> ImportAsync(Stream source, string fileName)
@@ -233,24 +257,30 @@ public partial class DrawingEditor : ComponentBase, IAsyncDisposable
         EnsureReady(); ArgumentNullException.ThrowIfNull(source);
         if (source.CanSeek && source.Length - source.Position > MaxFileBytes) throw new InvalidOperationException("Input exceeds MaxFileBytes.");
         using var reference = new DotNetStreamReference(source, leaveOpen: true);
-        var result = await _module!.InvokeAsync<DrawingImport>("importStream", _token, _handle, reference, fileName, MaxFileBytes);
+        var payload = await _module!.InvokeAsync<JsonElement>("importStream", _token, _handle, reference, fileName, MaxFileBytes);
+        var result = payload.Deserialize(DrawingInteropJsonContext.Default.DrawingImport) ?? throw new JsonException("Missing import result.");
         await ReceiveSnapshotAsync(result.Revision); return result;
     }
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor, typeof(StreamSnapshot))]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor, typeof(ExportStreamSnapshot))]
     public async Task<DrawingExport> ExportAsync(string format = "json")
     {
         EnsureReady(); await FlushAsync();
-        var snapshot = await _module!.InvokeAsync<ExportSnapshot>("exportStream", _token, _handle, format);
+        var snapshot = await _module!.InvokeAsync<ExportStreamSnapshot>("exportStream", _token, _handle, format);
         await using var reference = snapshot.Stream;
         await using var input = await reference.OpenReadStreamAsync(MaxFileBytes, _token);
         using var output = new MemoryStream(); await input.CopyToAsync(output, _token);
-        return new DrawingExport(output.ToArray(), snapshot.Revision, snapshot.Diagnostics);
+        var diagnostics = snapshot.Diagnostics.ValueKind == JsonValueKind.Array
+            ? snapshot.Diagnostics.Deserialize(DrawingInteropJsonContext.Default.ListDrawingDiagnostic) ?? []
+            : new List<DrawingDiagnostic>();
+        return new DrawingExport(output.ToArray(), snapshot.Revision, diagnostics);
     }
     public async Task BindRowsJsonAsync(string rowsJson, string keyField, IReadOnlyDictionary<string, string> mappings, bool twoWay = true)
     {
         EnsureReady(); _dataEpoch++; _lastDataRevision = -1; var bytes = Encoding.UTF8.GetBytes(rowsJson);
         if (bytes.Length > 32 * 1024 * 1024) throw new InvalidOperationException("Rows exceed 32 MiB.");
         using var source = new MemoryStream(bytes, writable: false); using var reference = new DotNetStreamReference(source, leaveOpen: true);
-        await _module!.InvokeVoidAsync("bindRowsStream", _token, _handle, reference, keyField, mappings, twoWay);
+        await _module!.InvokeVoidAsync("bindRowsStream", _token, _handle, reference, keyField, DrawingInterop.Mappings(mappings), twoWay);
     }
     public Task BindRowsAsync<T>(List<T> rows, JsonTypeInfo<List<T>> jsonTypeInfo, string keyField, IReadOnlyDictionary<string, string> mappings, bool twoWay = true)
         => BindRowsJsonAsync(JsonSerializer.Serialize(rows, jsonTypeInfo), keyField, mappings, twoWay);
@@ -264,7 +294,14 @@ public partial class DrawingEditor : ComponentBase, IAsyncDisposable
     private async Task DisposeCoreAsync()
     {
         Exception? failure = null;
-        if (_initializeTask is not null) try { await _initializeTask; } catch (OperationCanceledException) { } catch (JSDisconnectedException) { } catch (Exception error) { failure = error; }
+        if (_initializeTask is not null)
+        {
+            try { await _initializeTask; }
+            catch (OperationCanceledException) { }
+            catch (JSDisconnectedException) { }
+            catch (Exception) when (_initializationFailed) { /* Already reported through Error; disposal still releases the imported module. */ }
+            catch (Exception error) { failure = error; }
+        }
         try { if (_module is not null && _handle is not null) await _module.InvokeVoidAsync("dispose", _handle); }
         catch (JSDisconnectedException) { } catch (Exception error) { failure ??= error; }
         finally
@@ -279,4 +316,5 @@ public partial class DrawingEditor : ComponentBase, IAsyncDisposable
     public sealed class WriteResult { public bool Applied { get; set; } public long Revision { get; set; } }
     public class StreamSnapshot { public long Revision { get; set; } public IJSStreamReference Stream { get; set; } = default!; }
     public sealed class ExportSnapshot : StreamSnapshot { public List<DrawingDiagnostic> Diagnostics { get; set; } = []; }
+    public sealed class ExportStreamSnapshot : StreamSnapshot { public JsonElement Diagnostics { get; set; } }
 }

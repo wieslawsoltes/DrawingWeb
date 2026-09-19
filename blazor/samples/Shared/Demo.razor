@@ -19,6 +19,7 @@
     <DrawingInput @ref="_input" @bind-Value="_form.Diagram" Height="250px" Ready="OnFormReady" Error="OnError" />
     <ValidationMessage For="@(() => _form.Diagram)" /><button id="save-form" type="submit">Validate and save diagram</button><span id="form-status">@_formStatus</span>
 </EditForm>
+<FailureProbe />
 <details><summary>Current normalized document</summary><pre id="json-preview">@_document.ToJson()</pre></details>
 </main>
 @code {
@@ -77,13 +78,22 @@
             await _editor.UndoAsync(); var undone = await _editor.GetDocumentAsync();
             if (undone.Pages.SelectMany(p => p.Shapes).Any(s => s.Id == id)) throw new Exception("Undo did not remove the shape.");
             await _editor.RedoAsync();
+            using var patchJson = JsonDocument.Parse("{\"text\":\"Updated by typed patch\"}");
+            await _editor.UpdateShapeAsync(id, new Dictionary<string, JsonElement> { ["text"] = patchJson.RootElement.GetProperty("text").Clone() });
+            var updated = await _editor.GetDocumentAsync();
+            if (updated.Pages.SelectMany(p => p.Shapes).First(s => s.Id == id).Text != "Updated by typed patch") throw new Exception("Trim-safe command patch failed.");
+            await _editor.SelectAsync(id);
             var vsdx = await _editor.ExportAsync("vsdx"); if (vsdx.Bytes.Length < 100 || vsdx.Bytes[0] != 80 || vsdx.Bytes[1] != 75) throw new Exception("VSDX stream is invalid.");
             var svg = await _editor.ExportAsync("svg"); if (!System.Text.Encoding.UTF8.GetString(svg.Bytes).Contains("<svg")) throw new Exception("SVG stream is invalid.");
             var rows = new List<WorkflowRow> { new("db-1", "Streamed rows", 580, 250) };
             await _editor.BindRowsAsync(rows, DemoJson.Default.ListWorkflowRow, "id", _bindings);
             var bound = await _editor.GetDocumentAsync();
             if (bound.Pages.SelectMany(p => p.Shapes).First(s => s.Id == "db-1").Text != "Streamed rows") throw new Exception("Typed data projection failed.");
-            _testResult = "PASS — initialization, typed binding, undo/redo, VSDX/SVG streams, typed row binding.";
+            var exported = await _editor.ExportAsync("json");
+            using var input = new MemoryStream(exported.Bytes, writable: false);
+            var imported = await _editor.ImportAsync(input, "roundtrip.drawing.json");
+            if (!(await _editor.GetDocumentAsync()).Pages.SelectMany(p => p.Shapes).Any(s => s.Id == "start")) throw new Exception("JSON stream import lost shape identity.");
+            _testResult = "PASS — initialization, typed binding, undo/redo, command patches, selection, VSDX/SVG streams, typed rows and JSON stream import.";
         }
         catch (Exception error) { _testResult = "FAIL — " + error.Message; }
         finally { _testing = false; }

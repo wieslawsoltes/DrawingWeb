@@ -7,7 +7,9 @@
   </ItemGroup>
   <ItemGroup>
     <Content Include="../Shared/Demo.razor" Link="Demo.razor" />
+    <Content Include="../Shared/FailureProbe.razor" Link="FailureProbe.razor" />
     <Content Include="../Shared/demo.css" Link="wwwroot/demo.css" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../Shared/failure-probe.js" Link="wwwroot/failure-probe.js" CopyToOutputDirectory="PreserveNewest" />
     <Compile Include="../Shared/DemoModels.cs" Link="DemoModels.cs" />
   </ItemGroup>
 </Project>
