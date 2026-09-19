@@ -1,0 +1,91 @@
+@page "/"
+@namespace DrawingWeb.Samples
+@using Microsoft.AspNetCore.Components.Forms
+@using System.Text.Json
+@using DrawingWeb.Blazor
+<PageTitle>DrawingWeb · Blazor</PageTitle>
+<main class="demo"><header><a href="../">DrawingWeb</a><span>Native diagramming · Blazor Server / WebAssembly</span><a href="https://github.com/wieslawsoltes/DrawingWeb">Source ↗</a></header>
+<h1>A drawing control that belongs in your .NET application.</h1><p class="lead">This sample consumes the packed NuGet package. Its JavaScript, rendering engine, formats and styles are served locally — no CDN.</p>
+<div class="actions"><button id="run-tests" @onclick="SelfTest" disabled="@(!_ready || _testing)">Run integration checks</button><button id="add-shape" @onclick="AddShape" disabled="@(!_ready)">Add from C#</button><button id="change-row" @onclick="ChangeRow" disabled="@(!_ready)">Update bound row</button><button id="large-document" @onclick="LoadLarge" disabled="@(!_ready)">Load 1 MiB document</button><button id="toggle-editor" @onclick="Toggle">@(_visible ? "Remove editor" : "Recreate editor")</button><label><input type="checkbox" @bind="_readOnly" /> Read only</label></div>
+<p id="self-test" role="status">@_testResult</p><p id="ready-state">@(_ready ? "Ready" : "Initializing")</p><p id="error" role="alert">@_error</p>
+@if (_visible)
+{
+    <DrawingEditor @ref="_editor" @bind-Document="_document" @bind-RowsJson="_rows" Bindings="_bindings" KeyField="id"
+                   ValueRevision="_revision" Height="470px" ReadOnly="_readOnly" Ready="OnReady" Changed="OnChanged" Error="OnError" />
+}
+<div class="summary"><span id="shape-count">@_document.Pages.Sum(p => p.Shapes.Count) shapes</span><span id="change-count">@_changeCount changes</span><span>Row data: <code id="row-preview">@_rows</code></span></div>
+<h2>EditForm integration</h2><p>DrawingInput derives from InputBase and participates in modified-field tracking and validation. Flush before a save.</p>
+<EditForm EditContext="_editContext" OnSubmit="SubmitForm"><DataAnnotationsValidator />
+    <DrawingInput @ref="_input" @bind-Value="_form.Diagram" Height="250px" Ready="OnFormReady" Error="OnError" />
+    <ValidationMessage For="@(() => _form.Diagram)" /><button id="save-form" type="submit">Validate and save diagram</button><span id="form-status">@_formStatus</span>
+</EditForm>
+<details><summary>Current normalized document</summary><pre id="json-preview">@_document.ToJson()</pre></details>
+</main>
+@code {
+    private DrawingEditor? _editor;
+    private DrawingInput? _input;
+    private DrawingDocument _document = InitialDocument();
+    private readonly DemoForm _form = new() { Diagram = InitialDocument().ToJson() };
+    private EditContext _editContext = default!;
+    private string _rows = "[{\"id\":\"db-1\",\"label\":\"Database-bound process\",\"x\":540,\"y\":220}]";
+    private readonly IReadOnlyDictionary<string, string> _bindings = new Dictionary<string, string> { ["text"] = "label", ["x"] = "x", ["y"] = "y" };
+    private bool _ready, _visible = true, _readOnly, _testing;
+    private long _revision;
+    private int _changeCount;
+    private string _error = "", _testResult = "Integration checks have not run.", _formStatus = "Not saved.";
+    protected override void OnInitialized() => _editContext = new EditContext(_form);
+    private static DrawingDocument InitialDocument()
+    {
+        var document = new DrawingDocument { Title = "A strongly typed .NET diagram" };
+        document.Pages[0].Width = 1000; document.Pages[0].Height = 540;
+        document.Pages[0].Shapes.Add(new DrawingShape { Id = "start", Kind = "roundRect", Text = "Created in C#", X = 110, Y = 220, Width = 220, Height = 85, Style = new DrawingStyle { FontSize = 18 } });
+        document.Pages[0].Shapes.Add(new DrawingShape { Id = "db-1", Text = "Database-bound process", X = 540, Y = 220, Width = 250, Height = 85, Style = new DrawingStyle { Fill = "#edf6f0", FontSize = 18 } });
+        document.Pages[0].Shapes.Add(new DrawingShape { Id = "link", Kind = "connector", Width = 0, Height = 0, Source = new DrawingEndpoint(ShapeId: "start"), Target = new DrawingEndpoint(ShapeId: "db-1"), Style = new DrawingStyle { EndArrow = true, Fill = "none" } });
+        return document;
+    }
+    private Task OnReady() { _ready = true; return Task.CompletedTask; }
+    private Task OnFormReady() => Task.CompletedTask;
+    private Task OnError(DrawingErrorEvent error) { _error = error.Code + ": " + error.Message; return Task.CompletedTask; }
+    private Task OnChanged(DrawingChange change) { _changeCount++; return Task.CompletedTask; }
+    private async Task AddShape() { if (_editor is not null) { await _editor.AddShapeAsync("diamond", 430, 120, "C# command"); await _editor.FlushAsync(); } }
+    private void ChangeRow() => _rows = "[{\"id\":\"db-1\",\"label\":\"Updated from .NET data\",\"x\":560,\"y\":240}]";
+    private void Toggle() { _visible = !_visible; _ready = false; }
+    private void LoadLarge()
+    {
+        var document = InitialDocument();
+        using var buffer = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(buffer)) { writer.WriteStringValue(new string('x', 1024 * 1024)); }
+        using var json = JsonDocument.Parse(buffer.ToArray());
+        document.Metadata["large-payload"] = json.RootElement.Clone(); _document = document; _revision++;
+    }
+    private async Task SubmitForm()
+    {
+        if (_input is not null) await _input.FlushAsync();
+        var modified = _editContext.IsModified(); var valid = _editContext.Validate();
+        _formStatus = $"{(valid ? "Valid" : "Invalid")} · modified={modified} · {_form.Diagram.Length} characters";
+    }
+    private async Task SelfTest()
+    {
+        if (_editor is null) return; _testing = true; _testResult = "Running…"; _error = "";
+        try
+        {
+            var initial = await _editor.GetDocumentAsync();
+            if (!initial.Pages.SelectMany(p => p.Shapes).Any(s => s.Id == "start")) throw new Exception("Ready fired before the initial document was applied.");
+            var id = await _editor.AddShapeAsync("ellipse", 400, 130, "Interop check");
+            await _editor.FlushAsync();
+            if (!_document.Pages.SelectMany(p => p.Shapes).Any(s => s.Id == id)) throw new Exception("Typed document binding did not receive the edit.");
+            await _editor.UndoAsync(); var undone = await _editor.GetDocumentAsync();
+            if (undone.Pages.SelectMany(p => p.Shapes).Any(s => s.Id == id)) throw new Exception("Undo did not remove the shape.");
+            await _editor.RedoAsync();
+            var vsdx = await _editor.ExportAsync("vsdx"); if (vsdx.Bytes.Length < 100 || vsdx.Bytes[0] != 80 || vsdx.Bytes[1] != 75) throw new Exception("VSDX stream is invalid.");
+            var svg = await _editor.ExportAsync("svg"); if (!System.Text.Encoding.UTF8.GetString(svg.Bytes).Contains("<svg")) throw new Exception("SVG stream is invalid.");
+            var rows = new List<WorkflowRow> { new("db-1", "Streamed rows", 580, 250) };
+            await _editor.BindRowsAsync(rows, DemoJson.Default.ListWorkflowRow, "id", _bindings);
+            var bound = await _editor.GetDocumentAsync();
+            if (bound.Pages.SelectMany(p => p.Shapes).First(s => s.Id == "db-1").Text != "Streamed rows") throw new Exception("Typed data projection failed.");
+            _testResult = "PASS — initialization, typed binding, undo/redo, VSDX/SVG streams, typed row binding.";
+        }
+        catch (Exception error) { _testResult = "FAIL — " + error.Message; }
+        finally { _testing = false; }
+    }
+}

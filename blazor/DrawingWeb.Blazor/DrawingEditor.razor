@@ -1,0 +1,22 @@
+@namespace DrawingWeb.Blazor
+<div class="drawingweb-editor @Class" style="height:@Height;@Style" @attributes="AdditionalAttributes">
+    @if (ShowToolbar)
+    {
+        <div class="drawingweb-toolbar" role="toolbar" aria-label="Drawing tools">
+            <button type="button" disabled="@(!IsReady || ReadOnly)" @onclick='() => ExecuteAsync("undo")' title="Undo">↶ Undo</button>
+            <button type="button" disabled="@(!IsReady || ReadOnly)" @onclick='() => ExecuteAsync("redo")' title="Redo">↷ Redo</button>
+            <span class="drawingweb-divider"></span>
+            <button type="button" disabled="@(!IsReady || ReadOnly)" @onclick='() => AddShapeAsync("rectangle")'>▭ Process</button>
+            <button type="button" disabled="@(!IsReady || ReadOnly)" @onclick='() => AddShapeAsync("diamond")'>◇ Decision</button>
+            <button type="button" disabled="@(!IsReady || ReadOnly)" @onclick='() => ExecuteAsync("tool", "connector")'>↳ Connect</button>
+            <button type="button" disabled="@(!IsReady || ReadOnly)" @onclick='() => ExecuteAsync("tool", "select")'>Select</button>
+            <button type="button" disabled="@(!IsReady)" @onclick='FitAsync'>Fit page</button>
+            <span class="drawingweb-state" aria-live="polite">@(IsReady ? $"Revision {Revision}" : "Starting editor…")</span>
+        </div>
+    }
+    <div class="drawingweb-host" @ref="_host"></div>
+    @if (_errorMessage is not null)
+    {
+        <div class="drawingweb-error" role="alert">@_errorMessage</div>
+    }
+</div>

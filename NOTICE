@@ -1,0 +1,13 @@
+DrawingWeb is an independent implementation, not a Microsoft product and not
+an implementation of every Microsoft Visio feature. Visio is a Microsoft
+trademark. No Microsoft implementation code, proprietary stencils, or font
+files are distributed in this project. Original sample artwork is generated
+from DrawingWeb geometry.
+
+The JavaScript engine has no runtime package dependencies. TypeScript is a
+build-only dependency licensed under Apache-2.0. Blazor packages depend on
+Microsoft ASP.NET Core packages under their published licenses. Browser and
+.NET platform APIs are used for rendering, decompression, storage and interop.
+
+Third-party parts inside an imported VSDX belong to their respective owners.
+Preservation of those parts does not grant rights to redistribute them.

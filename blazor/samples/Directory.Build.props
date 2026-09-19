@@ -1,0 +1,8 @@
+<Project><PropertyGroup>
+  <TargetFramework Condition="'$(TargetFramework)' == ''">net10.0</TargetFramework>
+  <Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings><LangVersion>12.0</LangVersion>
+  <DrawingWebVersion Condition="'$(DrawingWebVersion)' == ''">0.1.0-alpha.1</DrawingWebVersion>
+  <AspNetVersion Condition="'$(TargetFramework)' == 'net8.0'">8.0.31</AspNetVersion>
+  <AspNetVersion Condition="'$(TargetFramework)' != 'net8.0'">10.0.12</AspNetVersion>
+  <RestoreAdditionalProjectSources>$(MSBuildThisFileDirectory)../../artifacts/nuget;$(RestoreAdditionalProjectSources)</RestoreAdditionalProjectSources>
+</PropertyGroup></Project>

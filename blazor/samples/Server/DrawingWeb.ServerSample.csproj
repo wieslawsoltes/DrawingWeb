@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <ItemGroup><PackageReference Include="DrawingWeb.Blazor" Version="$(DrawingWebVersion)" /></ItemGroup>
+  <ItemGroup><Content Include="../Shared/Demo.razor" Link="Demo.razor" /><Content Include="../Shared/demo.css" Link="wwwroot/demo.css" CopyToOutputDirectory="PreserveNewest" /><Compile Include="../Shared/DemoModels.cs" Link="DemoModels.cs" /></ItemGroup>
+</Project>

@@ -1,0 +1,41 @@
+@namespace DrawingWeb.Blazor
+@using System.Text.Json
+@using System.Text.Json.Serialization.Metadata
+@typeparam TItem
+<DrawingEditor @ref="_editor" @attributes="AdditionalAttributes" Document="@Document" DocumentChanged="@DocumentChanged"
+               ValueRevision="@ValueRevision" RowsJson="@_json" RowsJsonChanged="OnRowsChanged" KeyField="@KeyField" Bindings="@Bindings"
+               TwoWayDataBinding="@TwoWay" Height="@Height" ReadOnly="@ReadOnly" Ready="@Ready" Error="@Error" />
+@code {
+    private DrawingEditor? _editor;
+    private string _json = "[]";
+    private string? _lastTypedEmission;
+    [Parameter, EditorRequired] public List<TItem> Items { get; set; } = [];
+    [Parameter] public EventCallback<List<TItem>> ItemsChanged { get; set; }
+    [Parameter, EditorRequired] public JsonTypeInfo<List<TItem>> JsonTypeInfo { get; set; } = default!;
+    [Parameter, EditorRequired] public IReadOnlyDictionary<string, string> Bindings { get; set; } = new Dictionary<string, string>();
+    [Parameter] public string KeyField { get; set; } = "id";
+    [Parameter] public bool TwoWay { get; set; } = true;
+    [Parameter] public DrawingDocument? Document { get; set; }
+    [Parameter] public EventCallback<DrawingDocument> DocumentChanged { get; set; }
+    [Parameter] public long ValueRevision { get; set; }
+    [Parameter] public bool ReadOnly { get; set; }
+    [Parameter] public string Height { get; set; } = "480px";
+    [Parameter] public EventCallback Ready { get; set; }
+    [Parameter] public EventCallback<DrawingErrorEvent> Error { get; set; }
+    [Parameter(CaptureUnmatchedValues = true)] public IReadOnlyDictionary<string, object>? AdditionalAttributes { get; set; }
+    public DrawingEditor? Editor => _editor;
+    protected override void OnParametersSet()
+    {
+        ArgumentNullException.ThrowIfNull(JsonTypeInfo);
+        var incoming = JsonSerializer.Serialize(Items, JsonTypeInfo);
+        if (incoming != _lastTypedEmission) _json = incoming;
+    }
+    private async Task OnRowsChanged(string json)
+    {
+        _json = json;
+        var values = JsonSerializer.Deserialize(json, JsonTypeInfo) ?? [];
+        _lastTypedEmission = JsonSerializer.Serialize(values, JsonTypeInfo);
+        await ItemsChanged.InvokeAsync(values);
+    }
+    public Task FlushAsync() => _editor?.FlushAsync() ?? Task.CompletedTask;
+}

@@ -1,0 +1,81 @@
+import { DrawingError } from './model.js';
+export type FormulaValue = number | string | boolean;
+export type FormulaResolver = (reference: string) => FormulaValue;
+type Ast = {type:'literal';value:FormulaValue}|{type:'ref';name:string}|{type:'unary';op:string;value:Ast}|{type:'binary';op:string;left:Ast;right:Ast}|{type:'call';name:string;args:Ast[]};
+interface Token { text:string; type:'number'|'string'|'name'|'op'|'end' }
+const precedence:Record<string,number>={'=':1,'==':1,'<>':1,'!=':1,'<':1,'>':1,'<=':1,'>=':1,'&':2,'+':3,'-':3,'*':4,'/':4,'%':4,'^':5};
+const units:Record<string,number>={in:96,mm:96/25.4,cm:96/2.54,pt:96/72,px:1,deg:Math.PI/180,rad:1};
+function tokenize(input:string):Token[]{
+  if(input.length>65536)throw new DrawingError('FORMULA_LIMIT','Formula is too long.');
+  const result:Token[]=[];let i=0;
+  while(i<input.length){if(/\s/.test(input[i]!)){i++;continue;}const rest=input.slice(i);let match:RegExpMatchArray|null;
+    if((match=rest.match(/^(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?/))){result.push({text:match[0],type:'number'});i+=match[0].length;}
+    else if(input[i]==='"'){i++;let value='';let ended=false;while(i<input.length){if(input[i]==='"'){if(input[i+1]==='"'){value+='"';i+=2;}else{i++;ended=true;break;}}else value+=input[i++];}if(!ended)throw new DrawingError('FORMULA_SYNTAX','Unterminated string.');result.push({text:value,type:'string'});}
+    else if((match=rest.match(/^[A-Za-z_$][\w.$]*(?:![A-Za-z_$][\w.$]*)?/))){result.push({text:match[0],type:'name'});i+=match[0].length;}
+    else if((match=rest.match(/^(?:<=|>=|<>|!=|==|[+\-*/%^&=<>(),])/))){result.push({text:match[0],type:'op'});i+=match[0].length;}
+    else throw new DrawingError('FORMULA_SYNTAX',`Unexpected token at offset ${i}.`);
+    if(result.length>4096)throw new DrawingError('FORMULA_LIMIT','Too many formula tokens.');
+  }result.push({text:'',type:'end'});return result;
+}
+export class Formula {
+  private readonly ast:Ast;
+  readonly dependencies:ReadonlySet<string>;
+  constructor(public readonly source:string){
+    const tokens=tokenize(source.startsWith('=')?source.slice(1):source);let index=0,depth=0;const refs=new Set<string>();
+    const peek=()=>tokens[index]!,take=()=>tokens[index++]!;
+    const expression=(min=0):Ast=>{if(++depth>128)throw new DrawingError('FORMULA_DEPTH','Formula nesting is too deep.');let node:Ast;const token=take();
+      if(token.type==='number'){let value=Number(token.text);if(peek().type==='name'&&units[peek().text.toLowerCase()]!==undefined)value*=units[take().text.toLowerCase()]!;node={type:'literal',value};}
+      else if(token.type==='string')node={type:'literal',value:token.text};
+      else if(token.text==='+'||token.text==='-')node={type:'unary',op:token.text,value:expression(5)};
+      else if(token.text==='('){node=expression();if(take().text!==')')throw new DrawingError('FORMULA_SYNTAX','Expected closing parenthesis.');}
+      else if(token.type==='name'){
+        const name=token.text.toUpperCase();
+        if(peek().text==='('){take();const args:Ast[]=[];if(peek().text!==')'){do{args.push(expression());if(peek().text!==',')break;take();}while(true);}if(take().text!==')')throw new DrawingError('FORMULA_SYNTAX','Expected closing parenthesis.');node={type:'call',name,args};}
+        else if(name==='TRUE'||name==='FALSE')node={type:'literal',value:name==='TRUE'};
+        else if(name==='PI')node={type:'literal',value:Math.PI};
+        else{refs.add(token.text);node={type:'ref',name:token.text};}
+      }else throw new DrawingError('FORMULA_SYNTAX',`Unexpected ${token.text||'end of input'}.`);
+      while(peek().type==='op'&&precedence[peek().text]!==undefined&&precedence[peek().text]!>=min){const op=take().text,p=precedence[op]!;node={type:'binary',op,left:node,right:expression(op==='^'?p:p+1)};}
+      depth--;return node;
+    };
+    this.ast=expression();if(peek().type!=='end')throw new DrawingError('FORMULA_SYNTAX','Unexpected trailing input.');this.dependencies=refs;
+  }
+  evaluate(resolve:FormulaResolver=reference=>{throw new DrawingError('FORMULA_REFERENCE',`Unknown reference: ${reference}`);}):FormulaValue{
+    let budget=16384;const num=(v:FormulaValue)=>{const n=Number(v);if(!Number.isFinite(n))throw new DrawingError('FORMULA_VALUE','Expected a finite number.');return n;};
+    const run=(node:Ast):FormulaValue=>{if(--budget<0)throw new DrawingError('FORMULA_BUDGET','Formula operation budget exceeded.');
+      switch(node.type){
+        case 'literal':return node.value;
+        case 'ref':return resolve(node.name);
+        case 'unary':return node.op==='-'?-num(run(node.value)):num(run(node.value));
+        case 'binary':{const a=run(node.left),b=run(node.right);switch(node.op){case '+':return num(a)+num(b);case '-':return num(a)-num(b);case '*':return num(a)*num(b);case '/':if(num(b)===0)throw new DrawingError('FORMULA_DIV0','Division by zero.');return num(a)/num(b);case '%':if(num(b)===0)throw new DrawingError('FORMULA_DIV0','Modulo by zero.');return num(a)%num(b);case '^':return num(a)**num(b);case '&':return String(a)+String(b);case '=':case '==':return a===b;case '<>':case '!=':return a!==b;case '<':return a<b;case '>':return a>b;case '<=':return a<=b;case '>=':return a>=b;}throw new DrawingError('FORMULA_OPERATOR',node.op);}
+        case 'call':{
+          const args=node.args,need=(min:number,max=min)=>{if(args.length<min||args.length>max)throw new DrawingError('FORMULA_ARITY',`${node.name} requires ${min}${min!==max?`..${max}`:''} arguments.`);};
+          if(node.name==='IF'){need(3);return run(args[run(args[0]!)?1:2]!);}
+          if(node.name==='AND'){need(1,256);return args.every(arg=>Boolean(run(arg)));}
+          if(node.name==='OR'){need(1,256);return args.some(arg=>Boolean(run(arg)));}
+          if(node.name==='GUARD'){need(1);return run(args[0]!);}
+          if(node.name==='NOT'){need(1);return !run(args[0]!);}
+          if(node.name==='CONCAT'||node.name==='CONCATENATE'){need(1,256);return args.map(arg=>String(run(arg))).join('');}
+          if(node.name==='LEN'){need(1);return String(run(args[0]!)).length;}
+          if(node.name==='RGB'){need(3);return '#'+args.map(arg=>Math.max(0,Math.min(255,Math.round(num(run(arg))))).toString(16).padStart(2,'0')).join('');}
+          const f:Record<string,{min:number;max?:number;fn:(...values:number[])=>number}>={ABS:{min:1,fn:Math.abs},SQRT:{min:1,fn:Math.sqrt},SIN:{min:1,fn:Math.sin},COS:{min:1,fn:Math.cos},TAN:{min:1,fn:Math.tan},ATAN2:{min:2,fn:Math.atan2},FLOOR:{min:1,fn:Math.floor},CEILING:{min:1,fn:Math.ceil},ROUND:{min:1,max:2,fn:(n,d=0)=>Math.round(n*10**d)/10**d},MIN:{min:1,max:256,fn:Math.min},MAX:{min:1,max:256,fn:Math.max},SUM:{min:1,max:256,fn:(...v)=>v.reduce((a,b)=>a+b,0)}};
+          const function_=f[node.name];if(!function_)throw new DrawingError('FORMULA_FUNCTION',`Unsupported function: ${node.name}`);need(function_.min,function_.max??function_.min);return function_.fn(...args.map(arg=>num(run(arg))));
+        }
+      }
+    };const result=run(this.ast);if(typeof result==='number'&&!Number.isFinite(result))throw new DrawingError('FORMULA_NUMBER','Formula produced a non-finite result.');return result;
+  }
+}
+export function evaluateFormula(source:string,resolve?:FormulaResolver):FormulaValue{return new Formula(source).evaluate(resolve);}
+/** Dependency-aware cell cache with transitive invalidation and cycle detection. */
+export class FormulaSheet {
+  private cells=new Map<string,FormulaValue|Formula>();private cache=new Map<string,FormulaValue>();private dependents=new Map<string,Set<string>>();
+  set(name:string,value:FormulaValue,formula?:string):void{
+    const old=this.cells.get(name);if(old instanceof Formula)for(const dependency of old.dependencies)this.dependents.get(dependency)?.delete(name);
+    const cell=formula?new Formula(formula):value;this.cells.set(name,cell);
+    if(cell instanceof Formula)for(const dependency of cell.dependencies){let set=this.dependents.get(dependency);if(!set)this.dependents.set(dependency,set=new Set());set.add(name);}
+    const visit=(key:string,seen=new Set<string>())=>{if(seen.has(key))return;seen.add(key);this.cache.delete(key);for(const dependent of this.dependents.get(key)??[])visit(dependent,seen);};visit(name);
+  }
+  get(name:string):FormulaValue{
+    const stack=new Set<string>();const evaluate=(key:string):FormulaValue=>{if(this.cache.has(key))return this.cache.get(key)!;if(stack.has(key))throw new DrawingError('FORMULA_CYCLE',`Circular cell reference: ${[...stack,key].join(' -> ')}`);const cell=this.cells.get(key);if(cell===undefined)throw new DrawingError('FORMULA_REFERENCE',`Unknown cell: ${key}`);stack.add(key);try{const value=cell instanceof Formula?cell.evaluate(evaluate):cell;this.cache.set(key,value);return value;}finally{stack.delete(key);}};return evaluate(name);
+  }
+}

@@ -1,0 +1,24 @@
+@namespace DrawingWeb.Blazor
+@inherits InputBase<string>
+<DrawingEditor @ref="_editor" Value="@CurrentValue" ValueChanged="OnValueChanged" ValueRevision="@ValueRevision"
+               ReadOnly="@ReadOnly" Grid="@Grid" Snap="@Snap" Height="@Height" ShowToolbar="@ShowToolbar"
+               AriaLabel="@AriaLabel" Class="@CssClass" AdditionalAttributes="@AdditionalAttributes" Ready="@Ready" Error="@Error" />
+@code {
+    private DrawingEditor? _editor;
+    [Parameter] public long ValueRevision { get; set; }
+    [Parameter] public bool ReadOnly { get; set; }
+    [Parameter] public bool Grid { get; set; } = true;
+    [Parameter] public bool Snap { get; set; } = true;
+    [Parameter] public string Height { get; set; } = "480px";
+    [Parameter] public bool ShowToolbar { get; set; } = true;
+    [Parameter] public string AriaLabel { get; set; } = "Diagram editor";
+    [Parameter] public EventCallback Ready { get; set; }
+    [Parameter] public EventCallback<DrawingErrorEvent> Error { get; set; }
+    public DrawingEditor? Editor => _editor;
+    private void OnValueChanged(string json) => CurrentValue = json;
+    public Task FlushAsync() => _editor?.FlushAsync() ?? Task.CompletedTask;
+    protected override bool TryParseValueFromString(string? value, out string result, out string? validationErrorMessage)
+    {
+        result = value ?? ""; validationErrorMessage = null; return true;
+    }
+}

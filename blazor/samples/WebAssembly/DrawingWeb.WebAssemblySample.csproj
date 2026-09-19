@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk.BlazorWebAssembly">
+  <PropertyGroup><WasmEnableWebcil>true</WasmEnableWebcil></PropertyGroup>
+  <ItemGroup><PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="$(AspNetVersion)" /><PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="$(AspNetVersion)" PrivateAssets="all" /><PackageReference Include="DrawingWeb.Blazor" Version="$(DrawingWebVersion)" /></ItemGroup>
+  <ItemGroup><Content Include="../Shared/Demo.razor" Link="Demo.razor" /><Content Include="../Shared/demo.css" Link="wwwroot/demo.css" CopyToOutputDirectory="PreserveNewest" /><Compile Include="../Shared/DemoModels.cs" Link="DemoModels.cs" /></ItemGroup>
+</Project>

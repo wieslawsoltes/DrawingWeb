@@ -1,0 +1,23 @@
+using System.Text.Json;
+using DrawingWeb.Blazor;
+int checks = 0;
+void Check(bool condition, string name) { if (!condition) throw new Exception(name); checks++; Console.WriteLine("PASS " + name); }
+var document = new DrawingDocument { Title = "<script> is ordinary text" };
+document.Pages[0].Shapes.Add(new DrawingShape { Id = "a", Text = "Unicode Ω 😀", Source = new DrawingEndpoint("b", "north"), Transform = [1, 0, 0.2, 1, 2, 3] });
+var json = document.ToJson(); var copy = DrawingDocument.FromJson(json);
+Check(copy.Title == document.Title, "source-generated title round trip");
+Check(copy.Pages[0].Shapes[0].Text == "Unicode Ω 😀", "Unicode shape text");
+Check(copy.Pages[0].Shapes[0].Source?.PortId == "north", "typed endpoint identity");
+Check(copy.Pages[0].Shapes[0].Transform?[2] == 0.2, "affine transform contract");
+Check(copy.Pages[0].Layers[0].Printable, "layer defaults");
+using var extra = JsonDocument.Parse("{\"custom\":42}");
+document.Pages[0].Shapes[0] = document.Pages[0].Shapes[0] with { Extensions = new() { ["vendorExtension"] = extra.RootElement.Clone() } };
+var extended = DrawingDocument.FromJson(document.ToJson());
+Check(extended.Pages[0].Shapes[0].Extensions!["vendorExtension"].GetProperty("custom").GetInt32() == 42, "unknown shape properties retained");
+var million = new string('x', 1024 * 1024);
+using var metadata = JsonDocument.Parse("\"" + million + "\"");document.Metadata["large"] = metadata.RootElement.Clone();
+Check(DrawingDocument.FromJson(document.ToJson()).Metadata["large"].GetString()!.Length == million.Length, "one-megabyte source-generated model");
+Check(typeof(DrawingEditor).GetMethod("DisposeAsync") is not null, "awaitable lifecycle API");
+Check(typeof(DrawingInput).BaseType!.FullName!.Contains("InputBase"), "EditForm integration type");
+Check(typeof(DbDiagramDataSource).GetMethod("WriteAsync") is not null, "provider-neutral data API");
+Console.WriteLine($"{checks} package-restored .NET contract checks passed.");

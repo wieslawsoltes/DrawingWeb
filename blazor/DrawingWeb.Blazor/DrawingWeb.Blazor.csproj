@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings><LangVersion>12.0</LangVersion>
+    <Version>0.1.0-alpha.1</Version><PackageId>DrawingWeb.Blazor</PackageId><Authors>DrawingWeb contributors</Authors>
+    <Description>Self-contained, data-bound diagram editor for Blazor Server and WebAssembly. Includes the DrawingWeb engine and documented VSDX/VDX interchange profiles.</Description>
+    <PackageTags>blazor;diagram;drawing;visio;vsdx;data-binding</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression><PackageReadmeFile>README.md</PackageReadmeFile>
+    <RepositoryUrl>https://github.com/wieslawsoltes/DrawingWeb</RepositoryUrl><RepositoryType>git</RepositoryType>
+    <PackageProjectUrl>https://wieslawsoltes.github.io/DrawingWeb/</PackageProjectUrl>
+    <IncludeSymbols>true</IncludeSymbols><SymbolPackageFormat>snupkg</SymbolPackageFormat><EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile><NoWarn>$(NoWarn);CS1591</NoWarn>
+    <Deterministic>true</Deterministic><ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
+    <IsTrimmable>true</IsTrimmable><EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'"><PackageReference Include="Microsoft.AspNetCore.Components.Web" Version="8.0.31" /></ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'"><PackageReference Include="Microsoft.AspNetCore.Components.Web" Version="10.0.12" /></ItemGroup>
+  <ItemGroup><None Include="../README.md" Pack="true" PackagePath="/README.md" /><None Include="../../LICENSE" Pack="true" PackagePath="/LICENSE" /></ItemGroup>
+  <Target Name="VerifyNativeEngine" BeforeTargets="PrepareForBuild;GenerateNuspec">
+    <Error Condition="!Exists('wwwroot/engine/bridge.js')" Text="DrawingWeb native assets are missing. Run npm ci and npm run build from the repository root before building or packing the Blazor library." />
+  </Target>
+</Project>
