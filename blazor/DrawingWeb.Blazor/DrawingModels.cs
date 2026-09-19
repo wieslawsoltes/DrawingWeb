@@ -2,7 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 namespace DrawingWeb.Blazor;
 
-/// <summary>Lossless normalized DrawingWeb document. Coordinates use CSS pixels and clockwise radians.</summary>
+/// <summary>Normalized DrawingWeb document with unknown JSON properties retained. Coordinates use CSS pixels and clockwise radians.</summary>
 public sealed record DrawingDocument
 {
     public string Schema { get; init; } = "drawingweb/1";
@@ -11,7 +11,9 @@ public sealed record DrawingDocument
     public List<DrawingPage> Pages { get; init; } = [new()];
     public List<DrawingMaster> Masters { get; init; } = [];
     public Dictionary<string, JsonElement> Metadata { get; init; } = [];
-    [JsonExtensionData] public Dictionary<string, JsonElement>? Extensions { get; init; }
+    // Extension data must be populated after construction. An init accessor makes
+    // source generation treat it as a constructor argument, which STJ rejects.
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extensions { get; set; }
     public string ToJson() => JsonSerializer.Serialize(this, DrawingJsonContext.Default.DrawingDocument);
     public static DrawingDocument FromJson(string json) => JsonSerializer.Deserialize(json, DrawingJsonContext.Default.DrawingDocument) ?? throw new JsonException("The document was null.");
 }
@@ -24,7 +26,7 @@ public sealed record DrawingPage
     public string Background { get; set; } = "#ffffff";
     public List<DrawingShape> Shapes { get; init; } = [];
     public List<DrawingLayer> Layers { get; init; } = [new()];
-    [JsonExtensionData] public Dictionary<string, JsonElement>? Extensions { get; init; }
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extensions { get; set; }
 }
 public sealed record DrawingShape
 {
@@ -51,7 +53,7 @@ public sealed record DrawingShape
     public DrawingEndpoint? Source { get; set; }
     public DrawingEndpoint? Target { get; set; }
     public string? Routing { get; set; }
-    [JsonExtensionData] public Dictionary<string, JsonElement>? Extensions { get; init; }
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extensions { get; set; }
 }
 public sealed record DrawingStyle
 {
@@ -68,7 +70,7 @@ public sealed record DrawingStyle
     public List<double> Dash { get; set; } = [];
     public bool StartArrow { get; set; }
     public bool EndArrow { get; set; }
-    [JsonExtensionData] public Dictionary<string, JsonElement>? Extensions { get; init; }
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extensions { get; set; }
 }
 public sealed record DrawingLayer
 {
@@ -77,12 +79,28 @@ public sealed record DrawingLayer
     public bool Visible { get; set; } = true;
     public bool Locked { get; set; }
     public bool Printable { get; set; } = true;
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extensions { get; set; }
 }
-public sealed record DrawingCell(string Value, string? Formula = null, string? Unit = null);
-public sealed record DrawingPoint(double X, double Y);
-public sealed record DrawingPort(string Id, double X, double Y, string? Direction = null);
-public sealed record DrawingEndpoint(string? ShapeId = null, string? PortId = null, double? X = null, double? Y = null);
-public sealed record DrawingMaster(string Id, string Name, string Category, DrawingShape Shape);
+public sealed record DrawingCell(string Value, string? Formula = null, string? Unit = null)
+{
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extensions { get; set; }
+}
+public sealed record DrawingPoint(double X, double Y)
+{
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extensions { get; set; }
+}
+public sealed record DrawingPort(string Id, double X, double Y, string? Direction = null)
+{
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extensions { get; set; }
+}
+public sealed record DrawingEndpoint(string? ShapeId = null, string? PortId = null, double? X = null, double? Y = null)
+{
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extensions { get; set; }
+}
+public sealed record DrawingMaster(string Id, string Name, string Category, DrawingShape Shape)
+{
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extensions { get; set; }
+}
 public sealed record DrawingChange(long Revision, string Json);
 public sealed record DrawingDataChange(long Revision, string Json);
 public sealed record DrawingErrorEvent(string Code, string Message);
