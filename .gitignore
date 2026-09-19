@@ -1,0 +1,13 @@
+node_modules/
+dist/
+site/
+artifacts/
+*.tgz
+*.nupkg
+*.snupkg
+**/bin/
+**/obj/
+blazor/DrawingWeb.Blazor/wwwroot/engine/
+test-results/
+playwright-report/
+.DS_Store
