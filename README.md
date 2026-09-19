@@ -104,6 +104,8 @@ dotnet add package DrawingWeb.Blazor --version 0.1.0-alpha.1
 
 `DrawingEditor` supports JSON or typed-document binding, commands, selection, import/export, streamed row binding, read-only state and revision-aware replacement. `DrawingInput` integrates with `EditForm` and validation. `DrawingDataEditor<TItem>` adds source-generated typed row binding. The RCL contains all JS assets; use your host's generated `.styles.css` link for CSS isolation. Server and WebAssembly samples restore the **packed NuGet**, not a project reference. See [Blazor integration](blazor/README.md).
 
+Application interop payloads use explicit JSON contracts rather than reflection over anonymous types. The published WebAssembly consumer is tested with assembly trimming enabled. Initialization errors are reported once per control instance; remove and recreate the control to retry initialization.
+
 ## What the editor does
 
 Multi-page documents; 11 original stencils; arbitrary vector paths; affine groups; selection/marquee; drag, resize and rotate; attached connectors; obstacle-aware routing; freehand simplification; text editing; layers; z-order; alignment; duplicate/copy/paste; deterministic undo/redo; pan/zoom; keyboard navigation; SVG/PNG export; validated import; property inspector; editable external-data table; CSV; local compare-and-swap persistence. The renderer caches paths/display items and spatially culls the viewport. It is Canvas 2D, **not WebGPU**, and no million-entity frame-time claim is made.
@@ -126,15 +128,17 @@ Open `http://localhost:4173/`. `npm run dev` serves the repository; open `/sampl
 ```sh
 mkdir -p artifacts/nuget
 dotnet pack blazor/DrawingWeb.Blazor/DrawingWeb.Blazor.csproj -c Release -o artifacts/nuget
-dotnet run --project blazor/samples/Server
-# Or:
+dotnet run --project blazor/samples/Server -f net10.0
+# The Server consumer also targets .NET 8:
+# dotnet run --project blazor/samples/Server -f net8.0
+# Browser-only host:
 dotnet run --project blazor/samples/WebAssembly
 ```
 
-Build JS before packing the RCL. Both .NET 8 and .NET 10 SDK/runtime families are used by release validation. No .NET SDK was available in the initial local implementation environment; authoritative .NET results are the package-restored CI runs, not an inferred local success.
+Build JS before packing the RCL. Both .NET 8 and .NET 10 SDK/runtime families are used by release validation. Authoritative .NET results are the package-restored CI runs, not an inferred local success.
 
 ## Release qualification and documentation
 
 [Architecture](docs/ARCHITECTURE.md) · [Visio compatibility](docs/COMPATIBILITY.md) · [Data adapters](docs/DATA.md) · [Security](docs/SECURITY.md) · [Publishing](docs/PUBLISHING.md) · [Changelog](CHANGELOG.md).
 
-Publishing is gated by native tests, browser tests, clean npm-consumer checks, .NET builds, packed-NuGet consumer builds, and Server/WASM browser checks. `NPM_TOKEN` and `NUGET_API_KEY` are used only in the publishing job. Registry links above identify package destinations; a workflow file alone is not evidence of successful publication. Consult the release run and registry version for the actual status.
+Publishing is gated by native tests, browser tests, clean npm-consumer checks, .NET builds, packed-NuGet consumer builds, and Server/WASM browser checks. The integration tests include actual EditForm edits and an intentionally failing native initialization to verify bounded error reporting and disposal. `NPM_TOKEN` and `NUGET_API_KEY` are used only in the publishing jobs. Registry links above identify package destinations; a workflow file alone is not evidence of successful publication. Consult the release run and registry version for the actual status.
