@@ -1,4 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup><TargetFrameworks>net8.0;net10.0</TargetFrameworks></PropertyGroup>
   <ItemGroup><PackageReference Include="DrawingWeb.Blazor" Version="$(DrawingWebVersion)" /></ItemGroup>
-  <ItemGroup><Content Include="../Shared/Demo.razor" Link="Demo.razor" /><Content Include="../Shared/demo.css" Link="wwwroot/demo.css" CopyToOutputDirectory="PreserveNewest" /><Compile Include="../Shared/DemoModels.cs" Link="DemoModels.cs" /></ItemGroup>
+  <ItemGroup>
+    <Content Include="../Shared/Demo.razor" Link="Demo.razor" />
+    <Content Include="../Shared/demo.css" Link="wwwroot/demo.css" CopyToOutputDirectory="PreserveNewest" />
+    <Compile Include="../Shared/DemoModels.cs" Link="DemoModels.cs" />
+  </ItemGroup>
 </Project>
