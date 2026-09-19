@@ -1,0 +1,70 @@
+name: Materialize verified DrawingWeb source
+on:
+  push:
+    branches: [main]
+    paths: ['.source/**', '.github/workflows/materialize.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: drawingweb-source-materialization
+  cancel-in-progress: false
+jobs:
+  materialize:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify and materialize the complete source tree
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import base64, hashlib, json, lzma, pathlib, shutil
+          root = pathlib.Path.cwd()
+          source = root / '.source'
+          expected = [f'part-{i:02d}.b64' for i in range(10)]
+          if sorted(p.name for p in source.iterdir()) != expected:
+              raise SystemExit('Source transfer must contain exactly ten ordered parts')
+          encoded = b''.join((source / name).read_bytes() for name in expected)
+          if len(encoded) != 144176:
+              raise SystemExit('Incorrect encoded source length')
+          compressed = base64.b64decode(encoded, validate=True)
+          if len(compressed) != 108132 or hashlib.sha256(compressed).hexdigest() != '85f53920eea6202546e0437d3219b83106f6e7d10dea35352634b9c3aa83b5d2':
+              raise SystemExit('Source archive SHA-256 mismatch')
+          decoder = lzma.LZMADecompressor(memlimit=256 * 1024 * 1024)
+          raw = decoder.decompress(compressed, max_length=417332)
+          if not decoder.eof or decoder.unused_data or len(raw) != 417331:
+              raise SystemExit('Incorrect expanded source length')
+          payload = json.loads(raw)
+          files, hashes = payload['files'], payload['sha256']
+          if payload['format'] != 1 or len(files) != 67 or set(files) != set(hashes):
+              raise SystemExit('Invalid source manifest')
+          verified = []
+          for name, text in files.items():
+              rel = pathlib.PurePosixPath(name)
+              if rel.is_absolute() or '..' in rel.parts or '\\' in name or str(rel) != name or rel.parts[0] in ('.git', '.github', '.source'):
+                  raise SystemExit(f'Unsafe source path: {name}')
+              dest = root.joinpath(*rel.parts)
+              if any(p.is_symlink() for p in [dest, *dest.parents]):
+                  raise SystemExit(f'Symlink in source path: {name}')
+              data = text.encode('utf-8')
+              if hashlib.sha256(data).hexdigest() != hashes[name]:
+                  raise SystemExit(f'Source file hash mismatch: {name}')
+              verified.append((dest, data))
+          if sum(len(data) for _, data in verified) != 402758:
+              raise SystemExit('Incorrect aggregate source length')
+          for dest, data in verified:
+              dest.parent.mkdir(parents=True, exist_ok=True)
+              dest.write_bytes(data)
+          shutil.rmtree(source)
+          print(f'Materialized and verified {len(verified)} source files')
+          PY
+      - name: Commit normal source files without rewriting history
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'feat: add DrawingWeb engine, studio, Visio profiles and Blazor packages'
+          git push origin HEAD:main
