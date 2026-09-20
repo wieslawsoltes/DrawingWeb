@@ -1,0 +1,121 @@
+name: Qualify recovered alpha.2 source
+on:
+  push:
+    branches: [work/recover-visio-parity]
+permissions:
+  contents: write
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify exact source edits and materialize normal files
+        run: |
+          python3 - <<'PY'
+          import base64,hashlib,json,lzma,pathlib,shutil
+          root=pathlib.Path.cwd();directory=root/'.delivery'
+          expected=[f'part-{i:02d}.b64' for i in range(4)]
+          assert sorted(p.name for p in directory.iterdir())==expected
+          encoded=b''.join((directory/p).read_bytes() for p in expected)
+          assert len(encoded)==35400
+          compressed=base64.b64decode(encoded,validate=True)
+          assert len(compressed)==26548 and hashlib.sha256(compressed).hexdigest()=='0639b9483016713e621d0edae3a25759337c91829521a337970d781d409ef52d'
+          decoder=lzma.LZMADecompressor(memlimit=256*1024*1024)
+          raw=decoder.decompress(compressed,max_length=88120)
+          assert decoder.eof and not decoder.unused_data and len(raw)==88119
+          assert hashlib.sha256(raw).hexdigest()=='a4c213e8502f95e5eb2b8d017accb2fefba3945dbec9f641d539f8dbd2ac76c3'
+          entries=json.loads(raw);assert len(entries)==22
+          verified=[];seen=set()
+          for entry in entries:
+              name=entry['path'];rel=pathlib.PurePosixPath(name)
+              assert name not in seen and not rel.is_absolute() and '..' not in rel.parts and '\\' not in name and str(rel)==name
+              assert rel.parts[0] not in ('.git','.github','.delivery','.recovery')
+              seen.add(name);dest=root.joinpath(*rel.parts)
+              assert not any(p.is_symlink() for p in [dest,*dest.parents])
+              if entry['before'] is None:
+                  assert not dest.exists();data=entry['content'].encode('utf8')
+              else:
+                  original=dest.read_bytes();assert hashlib.sha256(original).hexdigest()==entry['before'],name
+                  lines=original.decode('utf8').splitlines(keepends=True)
+                  previous=len(lines)+1
+                  for start,end,text in reversed(entry['edits']):
+                      assert 0<=start<=end<previous
+                      lines[start:end]=text.splitlines(keepends=True);previous=start+1
+                  data=''.join(lines).encode('utf8')
+              assert hashlib.sha256(data).hexdigest()==entry['after'],name
+              verified.append((dest,data))
+          for dest,data in verified:
+              dest.parent.mkdir(parents=True,exist_ok=True);dest.write_bytes(data)
+          shutil.rmtree(directory)
+          (root/'.github/workflows/deliver.yml').unlink()
+          print('Verified and materialized',len(verified),'source files')
+          PY
+      - name: Commit complete source on the work branch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'feat: complete alpha.2 rendering, Visio interchange, ribbon and regression tests'
+          git push origin HEAD:work/recover-visio-parity
+          mkdir -p artifacts/qualification
+          git rev-parse HEAD > artifacts/qualification/commit.txt
+          git rev-parse 'HEAD^{tree}' > artifacts/qualification/tree.txt
+          git ls-tree -r HEAD > artifacts/qualification/source-manifest.txt
+          git archive --format=zip --output=artifacts/qualification/drawingweb-source.zip HEAD
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - run: npm ci --ignore-scripts
+      - name: Node and packed npm consumer tests
+        run: npm run check > artifacts/qualification/native.log 2>&1 || { cat artifacts/qualification/native.log; exit 1; }
+      - name: Pack and inspect self-contained multi-target RCL
+        run: |
+          dotnet pack blazor/DrawingWeb.Blazor/DrawingWeb.Blazor.csproj -c Release -p:RepositoryCommit=$(git rev-parse HEAD) -o artifacts/nuget
+          python scripts/verify-nuget.py
+      - name: Package-restored .NET 8 and .NET 10 model contracts
+        run: |
+          dotnet run --project blazor/tests/DrawingWeb.ModelTests.csproj -c Release -f net8.0
+          dotnet run --project blazor/tests/DrawingWeb.ModelTests.csproj -c Release -f net10.0
+      - name: Package-restored Server and trimmed WebAssembly consumers
+        run: |
+          dotnet build blazor/samples/Server/DrawingWeb.ServerSample.csproj -c Release -f net8.0
+          dotnet publish blazor/samples/Server/DrawingWeb.ServerSample.csproj -c Release -f net10.0 -o artifacts/server
+          dotnet publish blazor/samples/WebAssembly/DrawingWeb.WebAssemblySample.csproj -c Release -o artifacts/wasm
+      - name: Install browser qualification dependencies
+        run: |
+          python -m pip install --quiet playwright==1.57.0
+          python -m playwright install --with-deps chromium > /tmp/browser-install.log 2>&1 || { tail -n 80 /tmp/browser-install.log; exit 1; }
+      - name: Native browser and ribbon tests
+        run: python tests/browser.py
+      - name: Compose Pages payload
+        run: node scripts/compose-site.mjs
+        env:
+          PAGES_BASE_PATH: /DrawingWeb/
+      - name: Server and trimmed WASM browser integration
+        run: python tests/blazor-browser.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: alpha2-qualification
+          path: |
+            artifacts/qualification
+            artifacts/browser
+            artifacts/blazor-browser
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        with:
+          name: alpha2-packages
+          path: |
+            artifacts/npm/*.tgz
+            artifacts/nuget/*nupkg
+          retention-days: 30
