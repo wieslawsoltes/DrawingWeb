@@ -37,7 +37,7 @@ globalThis.mountDrawingWorkspace = function mountDrawingWorkspace(studio) {
         const input = document.createElement(field.options ? 'select' : field.type === 'textarea' ? 'textarea' : 'input');
         if (field.options) for (const option of field.options) { const o = document.createElement('option'); o.value = typeof option === 'string' ? option : option.value; o.textContent = typeof option === 'string' ? option : option.label; input.append(o); }
         else if (field.type !== 'textarea') input.type = field.type || 'text';
-        input.name = field.name; input.setAttribute('aria-label', field.label); input.value = String(field.value ?? '');
+        input.name = field.name; input.setAttribute('aria-label', field.label); if (field.value !== undefined || !field.options) input.value = String(field.value ?? '');
         input.required = field.required !== false; if (field.min !== undefined) input.min = field.min;
         if (field.max !== undefined) input.max = field.max;
         if (field.type === 'number') input.step = 'any';

@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import time
 from playwright.sync_api import sync_playwright
+from workspace_checks import run_workspace_checks
 
 ROOT = Path(__file__).resolve().parents[1]
 OFFLINE = os.environ.get("DRAWINGWEB_OFFLINE_BROWSER") == "1"
@@ -34,11 +35,13 @@ try:
             options["executable_path"] = os.environ["CHROMIUM_EXECUTABLE"]
         browser = playwright.chromium.launch(**options)
         page = browser.new_page(viewport={"width": 1440, "height": 1080}, device_scale_factor=1)
+        page.set_default_timeout(8000)
         page.on("pageerror", lambda error: errors.append(str(error)))
         if OFFLINE:
-            html = (ROOT / "site/index.html").read_text().replace('<link rel="stylesheet" href="./studio.css">', '<style>' + (ROOT / "site/studio.css").read_text() + '</style>').replace('<script type="module" src="./studio.js"></script>', '')
+            html = (ROOT / "site/index.html").read_text().replace('<link rel="stylesheet" href="./studio.css">', '<style>' + (ROOT / "site/studio.css").read_text() + '</style>').replace('<script type="module" src="./studio.js"></script>', '').replace('<script src="./workspace.js"></script>', '')
             page.set_content(html)
             page.add_script_tag(content=(ROOT / "dist/drawingweb.global.js").read_text())
+            page.add_script_tag(content=(ROOT / "sample/workspace.js").read_text())
             script = (ROOT / "sample/studio.js").read_text().replace("import * as Drawing from '../dist/esm/index.js';", "const Drawing = globalThis.DrawingWeb;")
             page.evaluate("async () => {" + script + "}")
         else:
@@ -148,6 +151,8 @@ try:
             check("IndexedDB atomic compare-and-swap", lambda: require(page.evaluate("async()=>{const {BrowserDocumentStore,createDocument}=studio.Drawing;const store=new BrowserDocumentStore('dw-test-'+Date.now());const d=createDocument();const rev=await store.save('a',d,0);let conflict=false;try{await store.save('a',d,0);}catch(e){conflict=e.code==='REVISION_CONFLICT';}const loaded=await store.load('a');await store.close();return rev===1&&loaded.revision===1&&conflict;}")))
         else:
             print("SKIP HTTP ESM loading and IndexedDB: offline/injected browser mode", flush=True)
+
+        run_workspace_checks(page, check, require)
 
         # Probe the exact compiled bridge, using a deterministic .NET stream/callback test double.
         page.evaluate("async()=>{window.B=window.DrawingWebBridge??await import('./engine/bridge.js');window.DotNet={createJSStreamReference:data=>data};window.calls=[];window.bridgeHost=document.createElement('div');bridgeHost.style.cssText='position:fixed;left:0;top:0;width:600px;height:360px;background:white;z-index:20';document.body.append(bridgeHost);window.bridge=B.create(bridgeHost,{invokeMethodAsync:async(method,...args)=>{calls.push([method,...args]);}});}")

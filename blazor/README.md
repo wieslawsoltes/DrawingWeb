@@ -1,6 +1,6 @@
 # DrawingWeb.Blazor
 
-`DrawingWeb.Blazor` `0.1.0-alpha.1` targets .NET 8 and .NET 10. The Razor class library contains the real DrawingWeb engine, web control and interop as local static web assets. No CDN or font download is required. Build the JavaScript distribution before packing from source.
+`DrawingWeb.Blazor` `0.1.0-alpha.2` targets .NET 8 and .NET 10. The Razor class library contains the real DrawingWeb engine, web control and interop as local static web assets. No CDN or font download is required. Build the JavaScript distribution before packing from source.
 
 ## Controls
 

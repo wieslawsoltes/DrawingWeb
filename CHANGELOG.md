@@ -1,10 +1,10 @@
 # Changelog
 
-## Unreleased — semantic workspace expansion
+## 0.1.0-alpha.2 — semantic workspace expansion
 
 Added semantic containers/lists and auto-fitting membership locks, cross-functional pools, callouts, comments/replies, hyperlinks, rich runs/paragraphs/editing, shared Canvas/SVG layout, embedded raster media, background pages, original themes and derived data graphics. Added typed recordsets, stable-key linking/refresh, ADO XML and native Visio recordset/row-map projection. Added opt-in unit-aware ShapeSheet dependency projection and VSSX/VSTX package profiles, including unplaced master media.
 
-Replaced the compact sample toolbar with an eight-tab ribbon, Backstage, command search, rulers, Shapes/templates/masters, external data and Format/Layers/Review/ShapeSheet task panes. Added typed Blazor feature models and APIs without disabling WebAssembly trimming. Expanded coverage to 106 Node tests, package subpaths and browser semantic interactions. Container grouping/copy/deletion, reverse native memberships, native lists, duplicated identities, keyed refresh, cached unsupported formulas, image failures and unavailable storage now have regression coverage.
+Replaced the compact sample toolbar with an eight-tab ribbon, Backstage, command search, rulers, Shapes/templates/masters, external data and Format/Layers/Review/ShapeSheet task panes. Added typed Blazor feature models and APIs without disabling WebAssembly trimming. Expanded coverage to 88 Node tests and 40 local offline-browser checks, plus clean npm-consumer qualification of 12 subpaths. New regression checks cover semantic movement, membership locks, duplication, stable keyed refresh, cached unsupported formulas, native text runs and row maps, template/stencil packages, ribbon commands, comments, rich editing, embedded image pixels and independent print visibility. CI additionally exercises HTTP/IndexedDB and package-restored Blazor hosts.
 
 Full Microsoft Visio parity and independent desktop fidelity certification remain outstanding; see the detailed parity review.
 

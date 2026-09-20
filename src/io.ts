@@ -114,6 +114,7 @@ function readShape(ctx:ReadContext,source:XmlElement,pageId:string,part:string,p
   const connection=section(node,'Connection');if(connection)shape.ports=elements(connection,'Row').map((row,index)=>({id:row.attributes['N']??row.attributes['IX']??String(index),x:numberCell(row,'X')*96/Math.max(1,width),y:1-numberCell(row,'Y')*96/Math.max(1,height)}));
   const textMarkers=text?elements(text):[];
   readShapeExtensions(effectiveShape(node,inheritedStyle(ctx,node,'TextStyle')),shape,font=>ctx.fonts.get(font)??'Arial, sans-serif',input=>resolveColor(ctx,input,'#000000'),(code,message)=>diagnostic(ctx,code,message,part,shapeId));
+  if(instanceScope)shape.sheetId=undefined; // Master-local IDs are not page-local Sheet.N references.
   const foreign=first(source,'ForeignData')??(masterShape?first(masterShape,'ForeignData'):undefined);
   if(foreign&&ctx.entries){const owner=first(source,'ForeignData')?part:master?.part??part;const rel=relationships(ctx.entries,owner).find(r=>r.id===relationId(foreign)&&!r.external);const bytes=rel?ctx.entries.get(rel.target):undefined;
     if(bytes&&bytes.length<=16*1024*1024){const mime=bytes[0]===0x89&&bytes[1]===0x50?'image/png':bytes[0]===0xff&&bytes[1]===0xd8?'image/jpeg':String.fromCharCode(...bytes.slice(0,3))==='GIF'?'image/gif':String.fromCharCode(...bytes.slice(0,4))==='RIFF'&&String.fromCharCode(...bytes.slice(8,12))==='WEBP'?'image/webp':undefined;

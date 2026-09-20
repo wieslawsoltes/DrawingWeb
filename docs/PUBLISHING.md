@@ -1,6 +1,6 @@
 # Release and GitHub Pages
 
-The npm and NuGet versions are aligned at `0.1.0-alpha.1`. The root manifest defines ESM, CommonJS, declarations, browser globals and subpaths; the RCL embeds the same ESM engine under static web assets. Core source is not a generated dependency on a hosted CDN.
+The npm and NuGet versions are aligned at `0.1.0-alpha.2`. The root manifest defines ESM, CommonJS, declarations, browser globals and subpaths; the RCL embeds the same ESM engine under static web assets. Core source is not a generated dependency on a hosted CDN.
 
 ## Validation gates
 

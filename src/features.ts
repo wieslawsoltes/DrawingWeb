@@ -208,7 +208,7 @@ export class DiagramOperations {
         calloutTargetId:map.get(s.calloutTargetId??''),source:s.source?{...s.source,shapeId:map.get(s.source.shapeId??'')}:undefined,target:s.target?{...s.target,shapeId:map.get(s.target.shapeId??'')}:undefined,
         hyperlinks:s.hyperlinks?.map(l=>({...l,id:id('link'),pageId:l.pageId===pageId?newId:l.pageId,shapeId:map.get(l.shapeId??'')??l.shapeId}))});
       e.addMany(newId,page.shapes.map(copy));
-      const comments=(e.document.comments??[]).filter(c=>c.pageId===pageId).map(c=>({...clone(c),id:id('comment'),pageId:newId,shapeId:map.get(c.shapeId??'')}));
+      const comments=(e.document.comments??[]).filter(c=>c.pageId===pageId).map(c=>({...clone(c),id:id('comment'),pageId:newId,shapeId:map.get(c.shapeId??''),replies:c.replies.map(reply=>({...clone(reply),id:id('reply')}))}));
       if(comments.length)e.updateDocument({comments:[...(e.document.comments??[]),...comments]});
     });return newId;
   }

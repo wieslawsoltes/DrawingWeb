@@ -2,7 +2,7 @@
 
 A reusable, data-bound diagram engine, an accessible browser drawing control, and a self-contained Blazor component library. The ribbon-based studio is an actual consumer of the engine: canvas edits, property edits, table edits and undo all operate on the same model.
 
-**Version:** `0.1.0-alpha.1` · **License:** MIT · **JavaScript runtime dependencies:** none.
+**Version:** `0.1.0-alpha.2` · **License:** MIT · **JavaScript runtime dependencies:** none.
 
 - [Studio / GitHub Pages](https://wieslawsoltes.github.io/DrawingWeb/)
 - [Blazor WebAssembly sample](https://wieslawsoltes.github.io/DrawingWeb/blazor/)
@@ -38,7 +38,7 @@ The modules are independently importable **subpaths of one versioned npm package
 ## JavaScript / TypeScript
 
 ```sh
-npm install @wieslawsoltes/drawingweb@0.1.0-alpha.1
+npm install @wieslawsoltes/drawingweb@0.1.0-alpha.2
 ```
 
 ```ts
@@ -79,7 +79,7 @@ The host must have a measurable height, for example `height: 600px`. Call `regis
 ## Blazor
 
 ```sh
-dotnet add package DrawingWeb.Blazor --version 0.1.0-alpha.1
+dotnet add package DrawingWeb.Blazor --version 0.1.0-alpha.2
 ```
 
 ```razor

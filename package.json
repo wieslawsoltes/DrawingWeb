@@ -1,6 +1,6 @@
 {
   "name": "@wieslawsoltes/drawingweb",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.2",
   "description": "Data-bound diagram engine, accessible web control, Visio interchange and self-contained Blazor component",
   "type": "module",
   "license": "MIT",

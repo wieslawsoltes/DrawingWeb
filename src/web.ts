@@ -1,4 +1,7 @@
-import { DiagramEngine, createDocument, createShape, clone, DrawingError, id, parseDocument, Signal } from './core.js';
+import { layoutText, textFont, RichTextEditor } from './text.js';
+import { plainText } from './model.js';
+import { evaluateDataGraphic } from './features.js';
+import { DiagramEngine, createDocument, validateJson, createShape, clone, DrawingError, id, parseDocument, Signal } from './core.js';
 import type { DiagramDocument, Matrix, Page, Point, Rect, Shape, ShapeKind, Unsubscribe } from './model.js';
 import { bounds, contains, distanceToSegment, IDENTITY, inflate, inverse, localMatrix, multiply, shapePath, SpatialIndex, transformPoint, transformedBounds, translation, union } from './geometry.js';
 import { connectorRoute } from './layout.js';
@@ -8,11 +11,11 @@ export interface Viewport { zoom: number; x: number; y: number }
 export type DrawingTool = 'select' | 'pan' | 'connector' | 'pen' | Exclude<ShapeKind, 'connector' | 'group' | 'path'>;
 export interface DrawingControlOptions {
   engine?: DiagramEngine; document?: DiagramDocument; pageId?: string; readOnly?: boolean;
-  grid?: boolean; snap?: boolean; gridSize?: number; zoom?: number; minZoom?: number; maxZoom?: number;
+  guides?: boolean; grid?: boolean; snap?: boolean; gridSize?: number; zoom?: number; minZoom?: number; maxZoom?: number;
   ariaLabel?: string; background?: string; selectionColor?: string; onError?: (error: unknown) => void;
 }
 export interface RenderStatistics { visibleShapes: number; totalShapes: number; renderMilliseconds: number }
-interface RenderItem { shape: Shape; matrix: Matrix; rect: Rect; opacity: number; locked: boolean; parentId?: string; order: number; route?: Point[] }
+interface RenderItem { shape: Shape; matrix: Matrix; rect: Rect; printable: boolean; opacity: number; locked: boolean; parentId?: string; order: number; route?: Point[] }
 interface DragState { pointer: number; mode: 'move' | 'pan' | 'marquee' | 'resize' | 'rotate' | 'create' | 'pen'; start: Point; current: Point; screen: Point; ids: string[]; viewport: Viewport; shape?: Shape; handle?: number; points?: Point[]; add?: boolean }
 const handles = (r: Rect): Point[] => [{ x:r.x,y:r.y },{ x:r.x+r.width/2,y:r.y },{ x:r.x+r.width,y:r.y },{ x:r.x+r.width,y:r.y+r.height/2 },{ x:r.x+r.width,y:r.y+r.height },{ x:r.x+r.width/2,y:r.y+r.height },{ x:r.x,y:r.y+r.height },{ x:r.x,y:r.y+r.height/2 }];
 const clamp = (x: number, a: number, b: number): number => Math.max(a, Math.min(b, x));
@@ -21,6 +24,19 @@ const transparent = (color: string): boolean => color === 'none' || color === 't
 
 /** Retained display list shared by the editor and bitmap export. Browser globals are accessed only when instantiated. */
 export class CanvasRenderer {
+  readonly invalidated = new Signal<void>();
+  readonly errors = new Signal<unknown>();
+  private images = new Map<string,{image:HTMLImageElement;ready:Promise<void>;error?:unknown}>();
+  private disposed=false;
+  private image(source:string,doc:Document):HTMLImageElement {
+    let record=this.images.get(source);if(record)return record.image;
+    const image=doc.createElement('img');let resolve!:()=>void,reject!:(e:unknown)=>void;
+    const ready=new Promise<void>((a,b)=>{resolve=a;reject=b;});record={image,ready};this.images.set(source,record);
+    image.onload=()=>{resolve();if(!this.disposed)this.invalidated.emit();};
+    image.onerror=()=>{const error=new DrawingError('IMAGE_DECODE','Embedded image could not be decoded.');record!.error=error;reject(error);if(!this.disposed){this.errors.emit(error);this.invalidated.emit();}};
+    void ready.catch(()=>{});image.src=source;return image;
+  }
+  async prepareImages(pageId:string,doc:Document):Promise<void>{this.prepare(pageId);for(const item of this.items)if(item.shape.image)this.image(item.shape.image.source,doc);await Promise.all(this.items.filter(i=>i.shape.image).map(i=>this.images.get(i.shape.image!.source)!.ready));}
   private paths = new Map<string, { signature: string; value: Path2D }>();
   private index = new SpatialIndex<RenderItem>();
   private items: RenderItem[] = [];
@@ -32,19 +48,20 @@ export class CanvasRenderer {
   prepare(pageId: string): void {
     if (this.revision === this.engine.revision && this.pageId === pageId) return;
     this.pageId = pageId; this.revision = this.engine.revision; this.items = []; this.index.clear(); this.byId.clear();
-    const page = this.engine.getPage(pageId), layers = new Map(page.layers.map(layer => [layer.id,layer])); let order = 0;
-    const walk = (shapes: Shape[], visible: boolean, opacity: number, locked: boolean, parentId?: string) => {
+    const page = this.engine.getPage(pageId); let layers = new Map(page.layers.map(layer => [layer.id,layer])), background=false;let order = 0;
+    const walk = (shapes: Shape[], visible: boolean, opacity: number, locked: boolean, parentId?: string, printable=true) => {
       for (const shape of shapes) {
         const layer = layers.get(shape.layerId ?? 'default'), shown = visible && shape.visible !== false && layer?.visible !== false;
         if (!shown) continue;
         const matrix = this.engine.getRef(shape.id)!.matrix, route = shape.kind === 'connector' ? connectorRoute(this.engine, shape).points : undefined;
-        const rect = route ? bounds(route) : transformedBounds(shape,matrix);
-        const item: RenderItem = { shape, matrix, rect, route, opacity:opacity*shape.style.opacity, locked:locked || !!shape.locked || !!layer?.locked, parentId, order:order++ };
-        this.items.push(item); this.byId.set(shape.id,item); this.index.set(item,inflate(rect,Math.max(8,shape.style.strokeWidth*2)));
-        if (shape.children) walk(shape.children,shown,item.opacity,item.locked,shape.id);
+        const rect = route ? bounds(route) : transformedBounds(shape,matrix);let renderRect=rect;const graphic=evaluateDataGraphic(shape,this.engine.document.dataGraphics??[]);if(graphic.items.length)renderRect=union([renderRect,transformedBounds({...shape,height:shape.height+graphic.items.length*22+10},matrix)]);if(shape.calloutTargetId){const target=this.engine.getShape(shape.calloutTargetId),ref=this.engine.getRef(shape.calloutTargetId);if(target&&ref)renderRect=union([renderRect,transformedBounds(target,ref.matrix)]);}
+        const item: RenderItem = { shape, matrix, rect, route, printable:printable&&layer?.printable!==false, opacity:opacity*shape.style.opacity, locked:background || locked || !!shape.locked || !!layer?.locked, parentId, order:order++ };
+        this.items.push(item); this.byId.set(shape.id,item); this.index.set(item,inflate(renderRect,Math.max(8,shape.style.strokeWidth*2)));
+        if (shape.children) walk(shape.children,shown,item.opacity,item.locked,shape.id,item.printable);
       }
     };
-    walk(page.shapes,true,1,false);
+    const chain:Page[]=[];let current:Page|undefined=page;while(current){chain.unshift(current);current=current.backgroundPageId?this.engine.getPage(current.backgroundPageId):undefined;}
+    for(const source of chain){background=source!==page;layers=new Map(source.layers.map(l=>[l.id,l]));walk(source.shapes,true,1,false);}
     for (const key of this.paths.keys()) if (!this.byId.has(key)) this.paths.delete(key);
   }
   getItem(shapeId: string): Readonly<RenderItem> | undefined { return this.byId.get(shapeId); }
@@ -69,7 +86,7 @@ export class CanvasRenderer {
     }
     return undefined;
   }
-  draw(context: CanvasRenderingContext2D, pageId: string, viewport: Viewport, width: number, height: number, pixelRatio = 1, options: { grid?:boolean; gridSize?:number; background?:string; preview?:ReadonlyMap<string,Matrix> } = {}): void {
+  draw(context: CanvasRenderingContext2D, pageId: string, viewport: Viewport, width: number, height: number, pixelRatio = 1, options: { printing?:boolean; grid?:boolean; gridSize?:number; background?:string; preview?:ReadonlyMap<string,Matrix> } = {}): void {
     const began = performance.now(); this.prepare(pageId); const page=this.engine.getPage(pageId);
     context.setTransform(pixelRatio,0,0,pixelRatio,0,0); context.clearRect(0,0,width,height);
     context.fillStyle=options.background??'#efedf3';context.fillRect(0,0,width,height);
@@ -86,7 +103,7 @@ export class CanvasRenderer {
     // Moved items may enter the viewport from outside the broad-phase range.
     for(const key of options.preview?.keys()??[]) {const item=this.byId.get(key);if(item&&!selected.includes(item))selected.push(item);}
     selected.sort((a,b)=>a.order-b.order);let drawn=0;
-    for(const item of selected){if(item.shape.kind==='group'&&!item.shape.text)continue;context.save();context.globalAlpha=clamp(item.opacity,0,1);
+    for(const item of selected){if(options.printing&&!item.printable)continue;if(item.shape.kind==='group'&&!item.shape.text)continue;context.save();context.globalAlpha=clamp(item.opacity,0,1);
       let matrix=item.matrix;let ancestor:RenderItem|undefined=item;let preview:Matrix|undefined;
       while(ancestor){preview=options.preview?.get(ancestor.shape.id);if(preview)break;ancestor=ancestor.parentId?this.byId.get(ancestor.parentId):undefined;}
       if(preview)matrix=multiply(preview,matrix);
@@ -95,21 +112,25 @@ export class CanvasRenderer {
     context.restore();this.statistics={visibleShapes:drawn,totalShapes:this.items.length,renderMilliseconds:performance.now()-began};
   }
   private drawItem(c: CanvasRenderingContext2D, item: RenderItem, matrix: Matrix, preview?: Matrix): void {
-    const s=item.shape,style=s.style;c.strokeStyle=style.stroke;c.fillStyle=style.fill;c.lineWidth=style.strokeWidth;c.lineJoin='round';c.lineCap='round';c.setLineDash(style.dash);
+    const graphic=evaluateDataGraphic(item.shape,this.engine.document.dataGraphics??[]),s={...item.shape,style:graphic.style},style=s.style;c.strokeStyle=style.stroke;c.fillStyle=style.fill;c.lineWidth=style.strokeWidth;c.lineJoin='round';c.lineCap='round';c.setLineDash(style.dash);
     if(item.route){const p=preview?item.route.map(point=>transformPoint(preview,point)):item.route;if(!p.length)return;c.beginPath();c.moveTo(p[0]!.x,p[0]!.y);for(const point of p.slice(1))c.lineTo(point.x,point.y);if(!transparent(style.stroke))c.stroke();c.setLineDash([]);c.fillStyle=style.stroke;if(style.endArrow&&p.length>1)this.arrow(c,p.at(-2)!,p.at(-1)!,style.strokeWidth);if(style.startArrow&&p.length>1)this.arrow(c,p[1]!,p[0]!,style.strokeWidth);
       if(s.text){const middle=p[Math.floor((p.length-1)/2)]!,next=p[Math.min(p.length-1,Math.floor((p.length-1)/2)+1)]!;const x=(middle.x+next.x)/2,y=(middle.y+next.y)/2;c.font=`${style.italic?'italic ':''}${style.bold?'600 ':''}${style.fontSize}px ${style.fontFamily}`;const w=Math.min(320,Math.max(24,c.measureText(s.text).width+12)),h=style.fontSize*1.6;c.translate(x-w/2,y-h/2);c.fillStyle='#ffffffed';c.fillRect(0,0,w,h);this.drawText(c,s,w,h);}return;
     }
-    c.transform(...matrix);const path=this.path(s);if(s.kind!=='text'&&s.kind!=='group'){if(!transparent(style.fill))c.fill(path);if(!transparent(style.stroke)&&style.strokeWidth>0)c.stroke(path);}this.drawText(c,s,s.width,s.height);
+    if(s.calloutTargetId){const target=this.engine.getShape(s.calloutTargetId),ref=this.engine.getRef(s.calloutTargetId);if(target&&ref){const a=transformPoint(matrix,{x:s.width/2,y:s.height/2}),b=transformPoint(ref.matrix,{x:target.width/2,y:target.height/2});c.beginPath();c.moveTo(a.x,a.y);c.lineTo(b.x,b.y);c.stroke();}}
+    c.transform(...matrix);const path=this.path(s);if(s.kind!=='text'&&s.kind!=='group'){if(!transparent(style.fill))c.fill(path);if(!transparent(style.stroke)&&style.strokeWidth>0)c.stroke(path);}
+    if(s.container){const h=s.container.headerSize,v=s.container.orientation==='vertical';c.save();c.globalAlpha*=.09;c.fillStyle=style.stroke;c.fillRect(0,0,v?h:s.width,v?s.height:h);c.restore();c.beginPath();c.moveTo(v?h:0,v?0:h);c.lineTo(v?h:s.width,v?s.height:h);c.stroke();}
+    if(s.image){const image=this.image(s.image.source,c.canvas.ownerDocument);if(image.complete&&image.naturalWidth&&image.naturalHeight){const fit=s.image.fit,k=fit==='cover'?Math.max(s.width/image.naturalWidth,s.height/image.naturalHeight):Math.min(s.width/image.naturalWidth,s.height/image.naturalHeight),w=fit==='stretch'?s.width:image.naturalWidth*k,h=fit==='stretch'?s.height:image.naturalHeight*k;c.save();c.beginPath();c.rect(0,0,s.width,s.height);c.clip();c.drawImage(image,(s.width-w)/2,(s.height-h)/2,w,h);c.restore();}}
+    this.drawText(c,s,s.width,s.height);
+    for(const r of graphic.items){if(r.type==='bar'){c.fillStyle=r.background;c.fillRect(0,r.y,s.width,16);c.fillStyle=r.color;c.fillRect(0,r.y,s.width*(r.fraction??0),16);}c.fillStyle=r.type==='bar'?'#172b4d':r.color;c.font='12px Arial';c.textAlign='left';c.textBaseline='alphabetic';c.fillText((r.type==='icon'?'● ':'')+r.text,r.type==='bar'?5:0,r.y+12);}
   }
   private arrow(c:CanvasRenderingContext2D,a:Point,b:Point,width:number):void{const angle=Math.atan2(b.y-a.y,b.x-a.x),length=Math.max(8,3*width);c.save();c.translate(b.x,b.y);c.rotate(angle);c.beginPath();c.moveTo(0,0);c.lineTo(-length,-length*.4);c.lineTo(-length,length*.4);c.closePath();c.fill();c.restore();}
   private drawText(c:CanvasRenderingContext2D,s:Shape,width:number,height:number):void{
-    if(!s.text)return;const st=s.style,size=Math.max(1,st.fontSize),lineHeight=size*1.3;c.font=`${st.italic?'italic ':''}${st.bold?'bold ':''}${size}px ${st.fontFamily}`;c.fillStyle=st.color;c.textBaseline='middle';c.textAlign=st.align;
-    const available=Math.max(1,width-16),lines:string[]=[];
-    for(const paragraph of s.text.split('\n')){if(!paragraph){lines.push('');continue;}let line='';for(const word of paragraph.split(/\s+/)){const candidate=line?line+' '+word:word;if(line&&c.measureText(candidate).width>available){lines.push(line);line=word;}else line=candidate;}lines.push(line);}
-    c.save();c.beginPath();c.rect(0,0,width,height);c.clip();const x=st.align==='left'?8:st.align==='right'?width-8:width/2,y=(height-(lines.length-1)*lineHeight)/2;
-    lines.forEach((line,i)=>c.fillText(line,x,y+i*lineHeight));c.restore();
+    if(!s.text)return;const layout=layoutText({...s,width,height},(text,style)=>{c.font=textFont(style);return c.measureText(text).width;}),b=layout.block;
+    c.save();c.translate(b.x+b.width/2,b.y+b.height/2);c.rotate(b.rotation??0);c.translate(-b.width/2,-b.height/2);c.beginPath();c.rect(0,0,b.width,b.height);c.clip();c.textAlign='left';c.textBaseline='alphabetic';
+    for(const f of layout.fragments){c.font=textFont(f.style);c.fillStyle=f.style.color;c.fillText(f.text,f.x,f.y);c.strokeStyle=f.style.color;c.lineWidth=Math.max(.5,f.style.fontSize/16);for(const y of [f.style.underline?f.y+2:NaN,f.style.strike?f.y-f.style.fontSize*.3:NaN])if(Number.isFinite(y)){c.beginPath();c.moveTo(f.x,y);c.lineTo(f.x+f.width,y);c.stroke();}}
+    c.restore();
   }
-  dispose():void{this.paths.clear();this.items=[];this.byId.clear();this.index.clear();}
+  dispose():void{this.disposed=true;for(const {image}of this.images.values()){image.onload=null;image.onerror=null;}this.images.clear();this.invalidated.clear();this.errors.clear();this.paths.clear();this.items=[];this.byId.clear();this.index.clear();}
 }
 
 /** Standalone keyboard/pointer editor. It never owns an engine supplied by the caller. */
@@ -130,6 +151,7 @@ export class DrawingControl {
   private readonly accessibility: HTMLDivElement;
   private readonly live: HTMLDivElement;
   private editor?: HTMLTextAreaElement;
+  private richEditor?: {editor:RichTextEditor;shapeId:string};
   private options: DrawingControlOptions;
   private frame = 0;
   private disposed = false;
@@ -157,10 +179,11 @@ export class DrawingControl {
     listen('pointerdown',e=>this.safe(()=>this.pointerDown(e)));listen('pointermove',e=>this.safe(()=>this.pointerMove(e)));listen('pointerup',e=>this.safe(()=>this.pointerUp(e)));listen('pointercancel',()=>this.cancelGesture());listen('lostpointercapture',()=>{if(this.drag)this.cancelGesture();});
     listen('wheel',e=>{e.preventDefault();if(e.ctrlKey||e.metaKey)this.setZoom(this._viewport.zoom*Math.exp(-e.deltaY*.008),this.screenPoint(e));else{this._viewport={...this._viewport,x:this._viewport.x-e.deltaX,y:this._viewport.y-e.deltaY};this.viewportChanged();}},{passive:false});
     listen('keydown',e=>this.safe(()=>this.keyDown(e)));listen('keyup',e=>{if(e.code==='Space'){this.space=false;this.updateCursor();}});listen('blur',()=>{this.space=false;this.updateCursor();});
-    listen('dblclick',e=>{if(this.options.readOnly)return;const hit=this.hitTest(this.worldPoint(e),true);if(hit)this.editText(hit);});
+    listen('dblclick',e=>{if(this.options.readOnly)return;const hit=this.hitTest(this.worldPoint(e),true);if(hit)this.editRichText(hit);});
     listen('copy',e=>this.copyEvent(e));listen('cut',e=>{if(!this.options.readOnly){this.copyEvent(e);this.engine.remove(this.engine.selection);}});listen('paste',e=>this.safe(()=>this.pasteEvent(e)));
     listen('dragover',e=>{if(!this.options.readOnly&&e.dataTransfer?.types.includes('application/x-drawingweb-stencil')){e.preventDefault();e.dataTransfer.dropEffect='copy';}});
     listen('drop',e=>this.safe(()=>{if(this.options.readOnly)return;const kind=e.dataTransfer?.getData('application/x-drawingweb-stencil') as ShapeKind;if(kind&&STENCILS.includes(kind)){e.preventDefault();this.addShape(kind,this.worldPoint(e));}}));
+    this.subscriptions.push(this.renderer.invalidated.subscribe(()=>this.invalidate()),this.renderer.errors.subscribe(error=>this.errors.emit(error)));
     this.subscriptions.push(this.engine.changed.subscribe(()=>{if(!this.engine.document.pages.some(p=>p.id===this._pageId))this._pageId=this.engine.document.pages[0]!.id;this.updateAccessible();this.invalidate();}),this.engine.selectionChanged.subscribe(()=>{this.updateAccessible();this.live.textContent=`${this.engine.selection.length} shape${this.engine.selection.length===1?'':'s'} selected`;this.invalidate();}));
     this.updateAccessible();this.invalidate();
   }
@@ -244,8 +267,15 @@ export class DrawingControl {
     else if(command&&key==='d'){this.engine.duplicate();event.preventDefault();}
     else if(command&&key==='g'){event.shiftKey?this.engine.ungroup():this.engine.group();event.preventDefault();}
     else if(key==='delete'||key==='backspace'){this.engine.remove(this.engine.selection);event.preventDefault();}
-    else if(key==='f2'||key==='enter'){const first=this.engine.selection[0];if(first)this.editText(first);event.preventDefault();}
+    else if(key==='f2'||key==='enter'){const first=this.engine.selection[0];if(first)this.editRichText(first);event.preventDefault();}
     else if(key.startsWith('arrow')&&!command){const step=event.shiftKey?this.options.gridSize!:1;this.engine.move(this.engine.selection,key==='arrowleft'?-step:key==='arrowright'?step:0,key==='arrowup'?-step:key==='arrowdown'?step:0);event.preventDefault();}
+  }
+  editRichText(shapeId:string):void {
+    if(this.readOnly)return;this.finishText(true);const shape=this.engine.getShape(shapeId),ref=this.engine.getRef(shapeId);if(!shape||!ref)return;
+    const editor=new RichTextEditor(this.root,shape,()=>{this.finishText(true);this.focus();},()=>{this.finishText(false);this.focus();});
+    this.richEditor={editor,shapeId};const m=multiply([this.viewport.zoom,0,0,this.viewport.zoom,this.viewport.x,this.viewport.y],ref.matrix);
+    Object.assign(editor.element.style,{left:'0',top:'0',transformOrigin:'0 0',width:`${Math.max(40,shape.width)}px`,height:`${Math.max(32,shape.height)}px`,transform:`matrix(${m.join(',')})`});
+    editor.element.addEventListener('blur',()=>{if(this.richEditor?.editor===editor)this.safe(()=>this.finishText(true));},{once:true});
   }
   editText(shapeId:string):void{if(this.readOnly)return;this.finishText(true);const shape=this.engine.getShape(shapeId),ref=this.engine.getRef(shapeId);if(!shape||!ref)return;
     const textarea=this.host.ownerDocument.createElement('textarea');textarea.value=shape.text;textarea.setAttribute('aria-label',`Edit ${shape.text||shape.kind} text`);textarea.dataset.shapeId=shapeId;
@@ -256,12 +286,13 @@ export class DrawingControl {
     textarea.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();this.finishText(false);this.focus();}else if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();this.finishText(true);this.focus();}e.stopPropagation();});
     textarea.addEventListener('blur',()=>this.finishText(true));this.editor=textarea;this.root.append(textarea);textarea.focus();textarea.select();
   }
-  private finishText(commit:boolean):void{const editor=this.editor;if(!editor)return;this.editor=undefined;const shapeId=editor.dataset.shapeId!,value=editor.value;editor.remove();if(commit&&!this.readOnly&&this.engine.getShape(shapeId)&&this.engine.getShape(shapeId)!.text!==value)this.engine.update(shapeId,{text:value});}
+  private finishText(commit:boolean):void{const rich=this.richEditor;if(rich){this.richEditor=undefined;const value=rich.editor.value;rich.editor.dispose();if(commit&&!this.readOnly&&this.engine.getShape(rich.shapeId))this.engine.update(rich.shapeId,{richText:value,text:plainText(value)});}const editor=this.editor;if(!editor)return;this.editor=undefined;const shapeId=editor.dataset.shapeId!,value=editor.value;editor.remove();if(commit&&!this.readOnly&&this.engine.getShape(shapeId)&&this.engine.getShape(shapeId)!.text!==value)this.engine.update(shapeId,{text:value});}
   flush():void{this.finishText(true);}
-  private copyEvent(event:ClipboardEvent):void{const selected=new Set(this.engine.selection),shapes=this.engine.selection.filter(key=>{let parent=this.engine.getRef(key)?.parentId;while(parent){if(selected.has(parent))return false;parent=this.engine.getRef(parent)?.parentId;}return true;}).map(key=>clone(this.engine.getShape(key)!));if(!shapes.length)return;this.clipboard=shapes;event.clipboardData?.setData('application/x-drawingweb-shapes',JSON.stringify(shapes));event.clipboardData?.setData('text/plain',shapes.map(s=>s.text).join('\n'));event.preventDefault();}
-  private pasteEvent(event:ClipboardEvent):void{if(this.readOnly)return;const data=event.clipboardData?.getData('application/x-drawingweb-shapes');if(data){if(data.length>8*1024*1024)throw new DrawingError('CLIPBOARD_LIMIT','Clipboard data is too large.');const shapes=JSON.parse(data) as Shape[];const doc=createDocument();doc.pages[0]!.shapes=shapes;parseDocument(JSON.stringify(doc));this.pasteShapes(shapes);event.preventDefault();}else{const text=event.clipboardData?.getData('text/plain');if(text){this.addShape('text',undefined,text.slice(0,1_000_000));event.preventDefault();}}}
-  pasteShapes(shapes:readonly Shape[]):string[]{if(this.readOnly)throw new DrawingError('READ_ONLY','This diagram is read-only.');const ids=new Map<string,string>();const reserve=(s:Shape)=>{ids.set(s.id,id());s.children?.forEach(reserve);};shapes.forEach(reserve);
-    const copy=(s:Shape):Shape=>({...clone(s),id:ids.get(s.id)!,children:s.children?.map(copy),source:s.source?{...s.source,shapeId:ids.get(s.source.shapeId??'')??s.source.shapeId}:undefined,target:s.target?{...s.target,shapeId:ids.get(s.target.shapeId??'')??s.target.shapeId}:undefined});const additions=shapes.map(s=>{const result=copy(s);result.x+=24;result.y+=24;return result;});this.engine.addMany(this.pageId,additions);const result=additions.map(s=>s.id);this.engine.select(result);return result;
+  copyShapes():Shape[]{return this.engine.operationRoots(this.engine.selection).map(key=>{const shape=clone(this.engine.getShape(key)!);const ref=this.engine.getRef(key)!;if(ref.parentId){shape.x=0;shape.y=0;shape.rotation=0;shape.transform=ref.matrix;}return shape;});}
+  private copyEvent(event:ClipboardEvent):void{const shapes=this.copyShapes();if(!shapes.length)return;this.clipboard=shapes;event.clipboardData?.setData('application/x-drawingweb-shapes',JSON.stringify(shapes));event.clipboardData?.setData('text/plain',shapes.map(s=>s.text).join('\n'));event.preventDefault();}
+  private pasteEvent(event:ClipboardEvent):void{if(this.readOnly)return;const data=event.clipboardData?.getData('application/x-drawingweb-shapes');if(data){if(data.length>8*1024*1024)throw new DrawingError('CLIPBOARD_LIMIT','Clipboard data is too large.');const shapes=JSON.parse(data) as Shape[];this.pasteShapes(shapes);event.preventDefault();}else{const text=event.clipboardData?.getData('text/plain');if(text){this.addShape('text',undefined,text.slice(0,1_000_000));event.preventDefault();}}}
+  pasteShapes(shapes:readonly Shape[]):string[]{if(this.readOnly)throw new DrawingError('READ_ONLY','This diagram is read-only.');validateJson(shapes);if(!Array.isArray(shapes)||shapes.length>100000)throw new DrawingError('CLIPBOARD_LIMIT','Clipboard must be a bounded shape array.');const ids=new Map<string,string>();const reserve=(s:Shape)=>{if(!s||typeof s.id!=='string'||ids.has(s.id)||ids.size>=100000)throw new DrawingError('CLIPBOARD_SHAPE','Invalid or duplicate clipboard identity.');ids.set(s.id,id());s.children?.forEach(reserve);};shapes.forEach(reserve);
+    const copy=(s:Shape):Shape=>({...clone(s),id:ids.get(s.id)!,sheetId:undefined,layerId:this.engine.getPage(this.pageId).layers.some(l=>l.id===s.layerId)?s.layerId:undefined,dataLinks:s.dataLinks?.filter(l=>this.engine.document.recordsets?.some(r=>r.id===l.recordsetId)),dataGraphicId:this.engine.document.dataGraphics?.some(g=>g.id===s.dataGraphicId)?s.dataGraphicId:undefined,container:s.container?{...s.container,memberIds:s.container.memberIds.map(k=>ids.get(k)).filter((k):k is string=>!!k)}:undefined,calloutTargetId:ids.get(s.calloutTargetId??'')??(this.engine.getRef(s.calloutTargetId??'')?.pageId===this.pageId?s.calloutTargetId:undefined),children:s.children?.map(copy),source:s.source?{...s.source,shapeId:ids.get(s.source.shapeId??'')??(this.engine.getRef(s.source.shapeId??'')?.pageId===this.pageId?s.source.shapeId:undefined)}:undefined,target:s.target?{...s.target,shapeId:ids.get(s.target.shapeId??'')??(this.engine.getRef(s.target.shapeId??'')?.pageId===this.pageId?s.target.shapeId:undefined)}:undefined});const additions=shapes.map(s=>{const result=copy(s);result.x+=24;result.y+=24;return result;});this.engine.addMany(this.pageId,additions);const result=additions.map(s=>s.id);this.engine.select(result);return result;
   }
   private updateAccessible():void{if(this.disposed)return;const doc=this.host.ownerDocument,fragment=doc.createDocumentFragment();const selected=new Set(this.engine.selection);this.renderer.prepare(this.pageId);
     for(const item of this.renderer.displayList.slice(0,5000)){const option=doc.createElement('div');option.id=`dw-${this.canvas.getAttribute('aria-describedby')}-${item.shape.id}`;option.setAttribute('role','option');option.setAttribute('aria-selected',String(selected.has(item.shape.id)));option.textContent=item.shape.text||`${item.shape.kind} ${item.shape.id}`;fragment.append(option);}this.accessibility.replaceChildren(fragment);
@@ -271,16 +302,17 @@ export class DrawingControl {
   render():void{if(this.disposed)return;const rect=this.root.getBoundingClientRect(),width=Math.max(1,rect.width),height=Math.max(1,rect.height),ratio=Math.min(3,globalThis.devicePixelRatio||1);
     if(this.canvas.width!==Math.round(width*ratio))this.canvas.width=Math.round(width*ratio);if(this.canvas.height!==Math.round(height*ratio))this.canvas.height=Math.round(height*ratio);
     const preview=new Map<string,Matrix>(),drag=this.drag;
-    if(drag?.mode==='move'){const matrix=translation(this.snap(drag.current.x-drag.start.x),this.snap(drag.current.y-drag.start.y));for(const key of drag.ids)preview.set(key,matrix);}
+    if(drag?.mode==='move'){const matrix=translation(this.snap(drag.current.x-drag.start.x),this.snap(drag.current.y-drag.start.y));for(const key of this.engine.operationRoots(drag.ids))preview.set(key,matrix);}
     this.renderer.draw(this.context,this.pageId,this._viewport,width,height,ratio,{grid:this.options.grid,gridSize:this.options.gridSize,background:this.options.background,preview});
     const c=this.context;c.setTransform(ratio,0,0,ratio,0,0);c.translate(this._viewport.x,this._viewport.y);c.scale(this._viewport.zoom,this._viewport.zoom);const z=this._viewport.zoom;c.strokeStyle=this.options.selectionColor??'#8263ba';c.fillStyle='#fff';c.lineWidth=1.5/z;
+    if(this.options.guides!==false){const page=this.engine.getPage(this.pageId);c.save();c.strokeStyle='#19a1a8';c.setLineDash([5/z,4/z]);for(const x of page.guides?.x??[]){c.beginPath();c.moveTo(x,0);c.lineTo(x,page.height);c.stroke();}for(const y of page.guides?.y??[]){c.beginPath();c.moveTo(0,y);c.lineTo(page.width,y);c.stroke();}c.restore();}
     let r=this.selectionRect();if(r&&drag?.mode==='move')r={...r,x:r.x+this.snap(drag.current.x-drag.start.x),y:r.y+this.snap(drag.current.y-drag.start.y)};
     if(r){c.setLineDash([4/z,3/z]);c.strokeRect(r.x,r.y,r.width,r.height);c.setLineDash([]);if(!this.readOnly&&this.engine.selection.length===1&&this.engine.getShape(this.engine.selection[0]!)?.kind!=='connector'){for(const p of handles(r)){c.fillRect(p.x-3/z,p.y-3/z,6/z,6/z);c.strokeRect(p.x-3/z,p.y-3/z,6/z,6/z);}c.beginPath();c.moveTo(r.x+r.width/2,r.y);c.lineTo(r.x+r.width/2,r.y-20/z);c.stroke();c.beginPath();c.arc(r.x+r.width/2,r.y-24/z,4/z,0,2*Math.PI);c.fill();c.stroke();}}
     if(drag&&(drag.mode==='marquee'||drag.mode==='create'||drag.mode==='resize')){const box=drag.mode==='resize'?bounds([this.renderer.getItem(drag.shape!.id)!.rect,drag.current]):bounds([drag.start,drag.current]);c.fillStyle='#8563bc16';c.fillRect(box.x,box.y,box.width,box.height);c.setLineDash([4/z,3/z]);c.strokeRect(box.x,box.y,box.width,box.height);c.setLineDash([]);}
     if(drag?.mode==='pen'&&drag.points!.length){c.beginPath();c.moveTo(drag.points![0]!.x,drag.points![0]!.y);for(const p of drag.points!.slice(1))c.lineTo(p.x,p.y);c.lineWidth=2;c.stroke();}
     this.rendered.emit(this.renderer.statistics);
   }
-  async exportPng(scale=2):Promise<Blob>{this.flush();if(!Number.isFinite(scale)||scale<=0)throw new DrawingError('EXPORT_SCALE','Export scale must be positive.');const page=this.engine.getPage(this.pageId);if(page.width*page.height*scale*scale>64_000_000)throw new DrawingError('EXPORT_LIMIT','Bitmap export exceeds 64 million pixels.');const canvas=this.host.ownerDocument.createElement('canvas');canvas.width=Math.ceil(page.width*scale);canvas.height=Math.ceil(page.height*scale);const context=canvas.getContext('2d')!;this.renderer.draw(context,this.pageId,{zoom:1,x:0,y:0},page.width,page.height,scale,{background:page.background});return new Promise((resolve,reject)=>canvas.toBlob(blob=>blob?resolve(blob):reject(new DrawingError('EXPORT_FAILED','PNG encoding failed.')),'image/png'));}
+  async exportPng(scale=2):Promise<Blob>{this.flush();if(!Number.isFinite(scale)||scale<=0)throw new DrawingError('EXPORT_SCALE','Export scale must be positive.');const page=this.engine.getPage(this.pageId);if(page.width*page.height*scale*scale>64_000_000)throw new DrawingError('EXPORT_LIMIT','Bitmap export exceeds 64 million pixels.');const canvas=this.host.ownerDocument.createElement('canvas');canvas.width=Math.ceil(page.width*scale);canvas.height=Math.ceil(page.height*scale);const context=canvas.getContext('2d')!;await this.renderer.prepareImages(this.pageId,this.host.ownerDocument);this.renderer.draw(context,this.pageId,{zoom:1,x:0,y:0},page.width,page.height,scale,{background:page.background,printing:true});return new Promise((resolve,reject)=>canvas.toBlob(blob=>blob?resolve(blob):reject(new DrawingError('EXPORT_FAILED','PNG encoding failed.')),'image/png'));}
   dispose():void{if(this.disposed)return;this.finishText(false);this.disposed=true;this.abort.abort();this.observer.disconnect();if(this.frame)cancelAnimationFrame(this.frame);this.frame=0;for(const dispose of this.subscriptions)dispose();this.renderer.dispose();this.root.remove();this.viewChanged.clear();this.toolChanged.clear();this.errors.clear();this.rendered.clear();if(this.owned)this.engine.dispose();}
 }
 
