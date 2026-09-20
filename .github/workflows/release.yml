@@ -5,12 +5,52 @@ on:
     paths-ignore: ['.source/**', '.github/workflows/materialize.yml']
   pull_request:
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish this version after all qualification gates pass
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
   group: drawingweb-${{ github.ref }}
   cancel-in-progress: false
 jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.release.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Identify explicit version releases
+        id: release
+        env:
+          MANUAL_PUBLISH: ${{ inputs.publish }}
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess
+          current = json.load(open('package.json'))['version']
+          previous = subprocess.run(['git', 'show', 'HEAD^:package.json'], capture_output=True, text=True)
+          changed = previous.returncode != 0 or json.loads(previous.stdout)['version'] != current
+          publish = os.environ['GITHUB_REF'] == 'refs/heads/main' and (
+              os.environ['GITHUB_EVENT_NAME'] == 'push' and changed or
+              os.environ['GITHUB_EVENT_NAME'] == 'workflow_dispatch' and os.environ.get('MANUAL_PUBLISH') == 'true')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'publish={str(publish).lower()}\n')
+          print(f'Version {current}; registry publication: {publish}')
+          PY
+      - name: Archive the exact tracked source
+        run: |
+          mkdir -p artifacts
+          git archive --format=zip --output=artifacts/drawingweb-source.zip HEAD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: source
+          path: artifacts/drawingweb-source.zip
+          retention-days: 30
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -81,8 +121,8 @@ jobs:
         with:
           path: site
   npm:
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-    needs: validate
+    if: needs.plan.outputs.publish == 'true'
+    needs: [validate, plan]
     runs-on: ubuntu-latest
     environment: npm
     permissions:
@@ -105,8 +145,8 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
   nuget:
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-    needs: validate
+    if: needs.plan.outputs.publish == 'true'
+    needs: [validate, plan]
     runs-on: ubuntu-latest
     environment: nuget
     steps:
