@@ -1,0 +1,109 @@
+name: Qualify alpha.2 page transitions
+on:
+  push:
+    branches: [work/recover-visio-parity]
+permissions:
+  contents: write
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply the locally tested page transition fix
+        run: |
+          python3 - <<'PY'
+          import hashlib,pathlib
+          root=pathlib.Path.cwd()
+          def update(name,before,after,replacements):
+              p=root/name;data=p.read_bytes()
+              assert hashlib.sha256(data).hexdigest()==before,name
+              text=data.decode('utf8')
+              for old,new in replacements:
+                  assert text.count(old)==1,(name,old)
+                  text=text.replace(old,new)
+              data=text.encode('utf8')
+              assert hashlib.sha256(data).hexdigest()==after,name
+              p.write_bytes(data)
+          update('src/web.ts','aa14e3134023cebef072f2e5fd4f1c52551cf8ed5d2d16f04ffc92bd13f406a8','c4a26b8ded178ef1a85a6fe4a9ba50a6a1e3a095a9ac7d9ac81851cb651131c1',[
+              ("this.engine.changed.subscribe(()=>{if(!this.engine.document.pages.some(p=>p.id===this._pageId))this._pageId=this.engine.document.pages[0]!.id;this.updateAccessible();this.invalidate();})","this.engine.changed.subscribe(change=>{if(change.origin==='load'){this.cancelGesture();this.finishText(false);}this.updateAccessible();this.invalidate();})"),
+              ("  private updateAccessible():void{if(this.disposed)return;const doc=","  /** Selection cleanup can notify before document-change observers on load, removal and redo. */\n  private reconcilePage():void {\n    if (this.engine.document.pages.some(page=>page.id===this._pageId)) return;\n    // Switch first: cancelling captured input may synchronously invoke other view observers.\n    this._pageId=this.engine.document.pages[0]!.id;\n    this.cancelGesture();\n    this.finishText(false);\n  }\n  private updateAccessible():void{if(this.disposed)return;this.reconcilePage();const doc=")
+          ])
+          update('tests/browser.py','150400dea7481e9f0facdede47426a9930e960198ca7e674ecb040266d27a753','84ccf8bb02d0ed3fd5acbcf1a9cb4597c83f6faff19c481ee1f0b412e6199ede',[
+              ('from workspace_checks import run_workspace_checks','from workspace_checks import run_workspace_checks\nfrom replacement_checks import run_replacement_checks'),
+              ('page.on("pageerror", lambda error: errors.append(str(error)))','page.on("pageerror", lambda error: errors.append(str(error)))\n        page.on("console", lambda message: errors.append("console.error: " + message.text) if message.type == "error" else None)'),
+              ('        run_workspace_checks(page, check, require)','        run_workspace_checks(page, check, require)\n        run_replacement_checks(page, check, require)')
+          ])
+          update('docs/VISIO_PARITY_REVIEW.md','1cb02e2feec274580803f5343b830d9fb4c41f6338ff0d2c310ff8b56faa43b4','376f61adb4a2ad13d6222cf887c995b3158a74a0687b20731a3325d3f6504473',[
+              ('88 passing Node tests and 40 offline browser checks','88 passing Node tests and 43 offline browser checks')
+          ])
+          assert hashlib.sha256((root/'tests/replacement_checks.py').read_bytes()).hexdigest()=='7d703d768af0ed79d403fc8f99487b571d2f18079f141da414127612ed9ccccb'
+          (root/'.github/workflows/qualify-page-fix.yml').unlink()
+          PY
+      - name: Commit complete normal source and retain snapshot
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'fix: reconcile page transitions before selection observers and cancel stale text'
+          git push origin HEAD:work/recover-visio-parity
+          mkdir -p artifacts/qualification
+          git rev-parse HEAD > artifacts/qualification/commit.txt
+          git rev-parse 'HEAD^{tree}' > artifacts/qualification/tree.txt
+          git archive --format=zip --output=artifacts/qualification/drawingweb-source.zip HEAD
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - run: npm ci --ignore-scripts
+      - name: Node and packed npm consumer tests
+        run: npm run check > artifacts/qualification/native.log 2>&1 || { cat artifacts/qualification/native.log; exit 1; }
+      - name: Pack and inspect self-contained multi-target RCL
+        run: |
+          dotnet pack blazor/DrawingWeb.Blazor/DrawingWeb.Blazor.csproj -c Release -p:RepositoryCommit=$(git rev-parse HEAD) -o artifacts/nuget
+          python scripts/verify-nuget.py
+      - name: Package-restored .NET 8 and .NET 10 model contracts
+        run: |
+          dotnet run --project blazor/tests/DrawingWeb.ModelTests.csproj -c Release -f net8.0
+          dotnet run --project blazor/tests/DrawingWeb.ModelTests.csproj -c Release -f net10.0
+      - name: Package-restored Server and trimmed WebAssembly consumers
+        run: |
+          dotnet build blazor/samples/Server/DrawingWeb.ServerSample.csproj -c Release -f net8.0
+          dotnet publish blazor/samples/Server/DrawingWeb.ServerSample.csproj -c Release -f net10.0 -o artifacts/server
+          dotnet publish blazor/samples/WebAssembly/DrawingWeb.WebAssemblySample.csproj -c Release -o artifacts/wasm
+      - name: Install browser qualification dependencies
+        run: |
+          python -m pip install --quiet playwright==1.57.0
+          python -m playwright install --with-deps chromium > /tmp/browser-install.log 2>&1 || { tail -n 80 /tmp/browser-install.log; exit 1; }
+      - name: Native browser and page transition tests
+        run: python tests/browser.py
+      - name: Compose Pages payload
+        run: node scripts/compose-site.mjs
+        env:
+          PAGES_BASE_PATH: /DrawingWeb/
+      - name: Server and trimmed WASM browser integration
+        run: python tests/blazor-browser.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: alpha2-qualification
+          path: |
+            artifacts/qualification
+            artifacts/browser
+            artifacts/blazor-browser
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        with:
+          name: alpha2-packages
+          path: |
+            artifacts/npm/*.tgz
+            artifacts/nuget/*nupkg
+          retention-days: 30
