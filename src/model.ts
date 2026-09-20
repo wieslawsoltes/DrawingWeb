@@ -16,7 +16,7 @@ export interface TextRun {
   text: string;
   style?: Partial<Pick<ShapeStyle, 'fontFamily' | 'fontSize' | 'bold' | 'italic' | 'underline' | 'strike' | 'color'>>;
   /** Retained cached field text, not executable code. */
-  field?: { formula: string; format?: string };
+  field?: { formula: string; format?: string; nativeFormat?: string; value?: string; unit?: string };
 }
 export interface TextParagraph {
   runs: TextRun[]; align?: 'left' | 'center' | 'right';
@@ -57,6 +57,7 @@ export interface DiagramTheme { id: string; name: string; colors: Record<string,
 export interface ThemeBinding { fill?: string; stroke?: string; color?: string; font?: boolean }
 export interface Port { id: string; x: number; y: number; direction?: 'north' | 'east' | 'south' | 'west' }
 export interface Endpoint { shapeId?: string; portId?: string; x?: number; y?: number }
+export interface MasterBinding { sourceShapeId: string; style: (keyof ShapeStyle)[]; cells: string[]; text: boolean }
 export interface Shape extends Rect {
   id: string; kind: ShapeKind; text: string; rotation: number; style: ShapeStyle;
   /** Additional affine transform, applied after x/y translation and before geometry. */
@@ -74,6 +75,8 @@ export interface Shape extends Rect {
   dataLinks?: ShapeDataLink[]; dataGraphicId?: string; theme?: ThemeBinding;
   /** Explicit stable numeric sheet identity for ShapeSheet references. */
   sheetId?: number;
+  /** Explicit inherited channels. Local edits detach only the changed channel. */
+  masterBinding?: MasterBinding;
 
 }
 export interface Layer { id: string; name: string; visible: boolean; locked: boolean; printable: boolean }
@@ -133,6 +136,7 @@ export function validateDocument(document: DiagramDocument): void {
     if (!Array.isArray(shapes) || depth > 64) throw new DrawingError('DOCUMENT_DEPTH', 'Invalid shape collection or excessive nesting.');
     for (const shape of shapes) {
       if (++count > 1_000_000) throw new DrawingError('SHAPE_LIMIT', 'Too many shapes.');
+      if (shape.masterBinding) { const b=shape.masterBinding; if (!shape.masterId || typeof b.sourceShapeId!=='string' || !Array.isArray(b.style) || !Array.isArray(b.cells) || typeof b.text!=='boolean' || b.style.length>64 || b.cells.length>4096 || [...b.style,...b.cells].some(k=>typeof k!=='string'||/(?:^|\.)(?:__proto__|constructor|prototype)(?:\.|$)/i.test(k)) || b.style.some(k=>!['fill','stroke','strokeWidth','opacity','color','fontFamily','fontSize','bold','italic','underline','strike','verticalAlign','padding','lineSpacing','align','dash','startArrow','endArrow'].includes(k))) throw new DrawingError('MASTER_BINDING','Invalid master inheritance channels.'); }
       reserve(shape.id); numeric(shape.x); numeric(shape.y); numeric(shape.width, true); numeric(shape.height, true); numeric(shape.rotation);
       if (typeof shape.text !== 'string' || !KINDS.has(shape.kind) || !shape.style || !shape.data || !shape.cells || !Array.isArray(shape.ports))
         throw new DrawingError('SHAPE_SCHEMA', `Invalid shape ${shape.id}.`);

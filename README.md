@@ -2,7 +2,7 @@
 
 A reusable, data-bound diagram engine, an accessible browser drawing control, and a self-contained Blazor component library. The ribbon-based studio is an actual consumer of the engine: canvas edits, property edits, table edits and undo all operate on the same model.
 
-**Version:** `0.1.0-alpha.2` · **License:** MIT · **JavaScript runtime dependencies:** none.
+**Version:** `0.1.0-alpha.3` · **License:** MIT · **JavaScript runtime dependencies:** none.
 
 - [Studio / GitHub Pages](https://wieslawsoltes.github.io/DrawingWeb/)
 - [Blazor WebAssembly sample](https://wieslawsoltes.github.io/DrawingWeb/blazor/)
@@ -38,7 +38,7 @@ The modules are independently importable **subpaths of one versioned npm package
 ## JavaScript / TypeScript
 
 ```sh
-npm install @wieslawsoltes/drawingweb@0.1.0-alpha.2
+npm install @wieslawsoltes/drawingweb@0.1.0-alpha.3
 ```
 
 ```ts
@@ -79,7 +79,7 @@ The host must have a measurable height, for example `height: 600px`. Call `regis
 ## Blazor
 
 ```sh
-dotnet add package DrawingWeb.Blazor --version 0.1.0-alpha.2
+dotnet add package DrawingWeb.Blazor --version 0.1.0-alpha.3
 ```
 
 ```razor
@@ -147,3 +147,16 @@ Build JS before packing the RCL. Both .NET 8 and .NET 10 SDK/runtime families ar
 [Parity review](docs/VISIO_PARITY_REVIEW.md) · [Architecture](docs/ARCHITECTURE.md) · [Visio compatibility](docs/COMPATIBILITY.md) · [Data adapters](docs/DATA.md) · [Security](docs/SECURITY.md) · [Publishing](docs/PUBLISHING.md) · [Changelog](CHANGELOG.md).
 
 Publishing is gated by native tests, browser tests, clean npm-consumer checks, .NET builds, packed-NuGet consumer builds, and Server/WASM browser checks. The integration tests include actual EditForm edits and an intentionally failing native initialization to verify bounded error reporting and disposal. `NPM_TOKEN` and `NUGET_API_KEY` are used only in the publishing jobs. Registry links above identify package destinations; a workflow file alone is not evidence of successful publication. Consult the release run and registry version for the actual status.
+
+
+## Live inheritance and native qualification (alpha.3)
+
+`MasterService` propagates bound style/cell/text channels while retaining per-channel local overrides.
+`ShapeSheetService.setUserValue()` adds GUARD and bounded SETATREF/SETATREFEXPR/SETATREFEVAL
+write semantics to the supported geometry profile. `TextFieldService` explicitly activates retained
+native text-field formulas; unsupported fields keep their cached display. `readOfficeTheme()` and
+`readOfficeThemePackage()` import an explicit DrawingML color palette and Latin font names.
+
+See [live-feature contracts](docs/LIVE_PARITY.md) for API examples and exact limitations, and
+[native desktop qualification](docs/NATIVE_VISIO.md) for the optional Windows/installed-Visio
+legacy conversion and reference capture tool. These additions do not establish full Visio parity.

@@ -2,7 +2,7 @@
 'use strict';
 globalThis.mountDrawingWorkspace = function mountDrawingWorkspace(studio) {
   const D = studio.Drawing, engine = studio.engine, control = studio.control;
-  const operations = new D.DiagramOperations(engine), sheet = new D.ShapeSheetService(engine);
+  const operations = new D.DiagramOperations(engine), sheet = new D.ShapeSheetService(engine), masters = new D.MasterService(engine), fields = new D.TextFieldService(engine, sheet);
   const $ = id => document.getElementById(id), actions = new Map(), unsubscribers = [];
   const controller = new AbortController(); let clipboard = [], activePane = 'format', frame = 0;
   const page = () => engine.getPage(control.pageId);
@@ -107,6 +107,52 @@ globalThis.mountDrawingWorkspace = function mountDrawingWorkspace(studio) {
     for (const master of engine.document.masters) { const button = document.createElement('button'); button.className = 'template-card'; const title = document.createElement('strong'); title.textContent = master.name; const description = document.createElement('small'); description.textContent = master.category; button.append(title, description); button.onclick = () => { const id = engine.instantiateMaster(master.id, control.pageId, 150, 150); engine.select([id]); dialog.close(); }; grid.append(button); }
     if (!grid.childElementCount) grid.textContent = 'Select a shape and use Insert → Save as master, or open a VSSX library.'; dialogBody.append(grid);
   });
+  const themeFile = document.createElement('input'); themeFile.type = 'file'; themeFile.accept = '.xml,.thmx,.vsdx,.vssx,.vstx'; themeFile.hidden = true; document.body.append(themeFile);
+  add('office-theme', 'Import Office theme palette', () => themeFile.click());
+  listen(themeFile, 'change', async () => {
+    try {
+      const file = themeFile.files[0]; if (!file) return; if (file.size > 64 * 1024 * 1024) throw Error('Theme package exceeds 64 MiB.');
+      const choices = file.name.toLowerCase().endsWith('.xml') ? [D.readOfficeTheme(await file.text())] : await D.readOfficeThemePackage(new Uint8Array(await file.arrayBuffer()));
+      const selection = choices.length > 1 ? await formDialog('Choose Office theme', [{ name: 'index', label: 'Theme part', options: choices.map((c,i) => ({value:String(i),label:c.theme.name+' — '+c.part})) }]) : {index:'0'};
+      if (!selection) return; const result = choices[+selection.index]; operations.applyTheme(result.theme);
+      status(result.diagnostics.map(d => d.message).join(' '));
+    } catch (error) { showText('Office theme import', error.message); } finally { themeFile.value = ''; }
+  });
+  add('insert-field', 'Insert live text field', async () => {
+    const shape = one(), values = await formDialog('Insert text field', [
+      { name: 'formula', label: 'Formula', value: 'PAGENAME()' },
+      { name: 'format', label: 'Numeric picture (optional)', value: '', required: false }
+    ]);
+    if (!values) return;
+    const richText = structuredClone(shape.richText || D.richTextFromString(shape.text || ''));
+    if (!richText.paragraphs.length) richText.paragraphs.push({ runs: [] });
+    richText.paragraphs.at(-1).runs.push({ text: '', field: { formula: values.formula, ...(values.format ? { format: values.format } : {}) } });
+    engine.transaction('Insert live field', () => { engine.update(shape.id, { richText }); fields.activate([shape.id]); });
+    status(fields.diagnostics.length ? fields.diagnostics.map(d => d.message).join('; ') : 'Field inserted. Its formula and cached display are retained in VSDX.');
+  }, hasSelection);
+  add('activate-fields', 'Activate supported text fields', () => { const result = fields.activate(engine.selection.length ? engine.selection : undefined); status(result.length ? result.map(d => d.message).join('; ') : 'Supported text fields are live.'); });
+  add('freeze-fields', 'Freeze text field recalculation', () => { fields.deactivate(engine.selection.length ? engine.selection : undefined); status('Field formulas retained; cached display is frozen.'); });
+  add('restore-master', 'Restore master inheritance', () => engine.transaction('Restore inheritance', () => selected().forEach(s => masters.restore(s.id))), () => hasSelection() && selected().every(s => s.masterId));
+  add('detach-master', 'Detach master inheritance', () => engine.transaction('Detach instances', () => selected().forEach(s => masters.detach(s.id))), () => hasSelection() && selected().every(s => s.masterId));
+  add('edit-master', 'Edit master definition', async () => {
+    const instance = one(), master = engine.document.masters.find(m => m.id === instance.masterId);
+    if (!master) throw Error('Insert and select a master instance first.');
+    const values = await formDialog('Edit master definition', [
+      { name: 'name', label: 'Master name', value: master.name },
+      { name: 'text', label: 'Master text', value: master.shape.text || '', required: false },
+      { name: 'fill', label: 'Master fill', type: 'color', value: /^#[a-f0-9]{6}$/i.test(master.shape.style.fill) ? master.shape.style.fill : '#ffffff' }
+    ]);
+    if (!values) return;
+    const source = structuredClone(master.shape); source.style.fill = values.fill;
+    if (source.text !== values.text) { source.text = values.text; source.richText = undefined; }
+    masters.update(master.id, { name: values.name, shape: source }); status('Inherited channels updated. Local overrides remain unchanged.');
+  }, () => hasSelection() && !!selected()[0]?.masterId);
+  add('sheet-user-value', 'Assign ShapeSheet user value', async () => {
+    const shape = one(), values = await formDialog('Assign user value', [
+      { name: 'cell', label: 'Cell', value: 'Width' }, { name: 'value', label: 'Value in internal units', type: 'number', value: shape.width / 96 }
+    ]);
+    if (values) sheet.setUserValue(shape.id, values.cell, +values.value);
+  }, hasSelection);
   add('add-members', 'Add selected shapes to a container', () => { const c = container(); operations.addToContainer(c.id, engine.selection.filter(id => id !== c.id)); }, hasSelection);
   add('remove-members', 'Remove selected shapes from a container', () => { const c = container(); operations.removeFromContainer(c.id, engine.selection.filter(id => id !== c.id)); }, hasSelection);
   add('fit-container', 'Fit container to contents', () => operations.fitContainer(container().id), hasSelection);
@@ -244,7 +290,7 @@ globalThis.mountDrawingWorkspace = function mountDrawingWorkspace(studio) {
   const invalidate = () => { if (!frame) frame = requestAnimationFrame(() => { frame = 0; refresh(); }); };
   unsubscribers.push(engine.changed.subscribe(invalidate), engine.selectionChanged.subscribe(invalidate), control.viewChanged.subscribe(invalidate));
   const resize = new ResizeObserver(invalidate); resize.observe(document.querySelector('.drawing-area'));
-  Object.assign(studio, { operations, sheet, workspace: { run, setTab, setPane, template, actions } });
-  listen(window, 'pagehide', () => { controller.abort(); resize.disconnect(); cancelAnimationFrame(frame); unsubscribers.forEach(unsubscribe => unsubscribe()); sheet.dispose(); });
+  Object.assign(studio, { operations, sheet, masters, fields, workspace: { run, setTab, setPane, template, actions } });
+  listen(window, 'pagehide', () => { controller.abort(); resize.disconnect(); cancelAnimationFrame(frame); unsubscribers.forEach(unsubscribe => unsubscribe()); themeFile.remove(); fields.dispose(); sheet.dispose(); });
   refresh(); return studio.workspace;
 };

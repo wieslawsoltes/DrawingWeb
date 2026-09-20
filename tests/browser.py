@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import time
 from playwright.sync_api import sync_playwright
+from inheritance_checks import run_inheritance_checks
 from workspace_checks import run_workspace_checks
 from replacement_checks import run_replacement_checks
 
@@ -156,6 +157,7 @@ try:
 
         run_workspace_checks(page, check, require)
         run_replacement_checks(page, check, require)
+        run_inheritance_checks(page, check, require)
 
         # Probe the exact compiled bridge, using a deterministic .NET stream/callback test double.
         page.evaluate("async()=>{window.B=window.DrawingWebBridge??await import('./engine/bridge.js');window.DotNet={createJSStreamReference:data=>data};window.calls=[];window.bridgeHost=document.createElement('div');bridgeHost.style.cssText='position:fixed;left:0;top:0;width:600px;height:360px;background:white;z-index:20';document.body.append(bridgeHost);window.bridge=B.create(bridgeHost,{invokeMethodAsync:async(method,...args)=>{calls.push([method,...args]);}});}")

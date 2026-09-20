@@ -1,5 +1,15 @@
 # Visio parity review and implementation contract
 
+## Alpha.3 status
+
+The newer [live-feature contract](LIVE_PARITY.md) and [native desktop adapter](NATIVE_VISIO.md)
+supersede alpha.2 limitations specifically for live DrawingWeb master channels, selected ShapeSheet
+user-write semantics, supported opt-in native text fields, and explicit Office palette/font import.
+The table below remains the alpha.2 baseline for other features. Full native Quick Style matrices,
+portable legacy decoding/metafile rendering and complete Visio actions/constraints remain open.
+The desktop adapter delegates conversion/rendering to a separately installed, licensed Visio on
+Windows; it is not a portable implementation or evidence that native qualification has run.
+
 ## Review result
 
 The first published alpha provided a drawing editor and a conservative Visio interchange profile, not full Visio parity. This continuation adds semantic containers and lists, cross-functional pools, callouts, rich text, comments, linked recordsets, data graphics, background pages, embedded raster images, stencil/template packages, opt-in ShapeSheet projection, and corresponding browser and Blazor commands. The studio now uses a ribbon-oriented workspace instead of the previous compact toolbar.
@@ -32,7 +42,7 @@ Container membership does not reparent a shape. Operations expand semantic membe
 
 A recordset row uses a typed key, not its position in the current array. Refresh does not bind a missing key to an unrelated row. Exact auto-linking rejects ambiguous matches; projection errors roll back atomically. An unchanged refresh does not create another undo entry. Native list containers are not assumed to be DrawingWeb swimlane pools. Strikethrough uses the native Strikethru cell rather than the small-caps Style bit. Native text changes take precedence over application-only metadata.
 
-ShapeSheet cells are enrolled explicitly. Dependency evaluation is bounded and detects cycles; all results are evaluated before geometry projection. `deactivate` preserves cells/formulas but relinquishes projection authority. Replacing the document clears enrollment. Unsupported imported expressions are reported and retain their cached values. A literal enrolled Width remains authoritative until it is changed or deactivated; this is intentionally not a complete Visio constraint solver.
+ShapeSheet cells are enrolled explicitly. Dependency evaluation is bounded and detects cycles; all results are evaluated before geometry projection. `deactivate` preserves cells/formulas but relinquishes projection authority. Replacing the document clears enrollment. Unsupported imported expressions are reported and retain their cached values. In alpha.3, enrolled geometry reacts to explicit UI changes through the new user-write path. GUARD rejects writes; SETATREF redirects supported writes; an ordinary literal is replaced. This is still not a complete Visio constraint solver.
 
 Canvas and SVG share the rich text layout algorithm. Canvas uses actual measured text; headless SVG uses a deterministic approximation unless a measurer is supplied. Consequently this architecture does not claim pixel-identical text across renderers or machines. Raster decoding is bounded and PNG export fails explicitly when a required image cannot be decoded.
 

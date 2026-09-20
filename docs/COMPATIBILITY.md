@@ -61,3 +61,18 @@ Initial automated tests cover synthetic OPC/VDX fixtures, geometry/metadata roun
 - Microsoft: [Connect element](https://learn.microsoft.com/en-us/office/client-developer/visio/connect-element-connects_type-complextypevisio-xml)
 
 DrawingWeb is an original implementation informed by public format documentation. No proprietary implementation code, stencil artwork or fonts are distributed.
+
+
+## Alpha.3 boundary changes
+
+See [LIVE_PARITY.md](LIVE_PARITY.md). Native row inheritance is now cell-granular with tombstone
+and Inh semantics. New DrawingWeb master instances have live style/cell/text channels in JSON;
+VSDX rebuilding flattens those channels and emits `MASTER_INHERITANCE_FLATTENED`. Imported native
+masters remain cached unless explicitly adopted. New `TextFieldService` activation preserves
+native Field formulas and recalculates its documented subset. GUARD and selected SETATREF user
+writes are implemented, not the entire ShapeSheet function/constraint/action catalog.
+
+Office color palette and Latin-font import is available explicitly; Quick Styles/effects/variants
+are not automatically inferred. The optional [desktop adapter](NATIVE_VISIO.md) accepts legacy
+VSD/VSS/VST by delegating to installed Visio, with macros/events disabled; portable legacy decoding,
+full metafile drawing and native desktop certification remain unfulfilled.

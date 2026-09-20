@@ -126,4 +126,15 @@ Check(features.Theme!.Colors["accent"] == "#4472c4", "document theme contract");
 Check(features.Pages[0].Unit == "mm" && features.Pages[0].Guides!.Y[0] == 192, "ruler units and guide contract");
 Check(JsonSerializer.SerializeToElement(rich, DrawingJsonContext.Default.DrawingRichText).GetProperty("paragraphs").GetArrayLength() == 1, "standalone feature source generation");
 Check(typeof(DrawingEditor).GetMethod("CreateContainerAsync") is not null && typeof(DrawingEditor).GetMethod("SetCellAsync") is not null, "extended async Blazor API");
+var inheritanceDoc = new DrawingDocument();
+inheritanceDoc.Pages[0].Shapes.Add(new DrawingShape { Id = "bound", MasterId = "m",
+    MasterBinding = new DrawingMasterBinding { SourceShapeId = "source", Style = ["fill"], Cells = ["Width"], Text = true },
+    RichText = new DrawingRichText { Paragraphs = [new DrawingTextParagraph { Runs = [new DrawingTextRun { Text = "1.50", Field = new DrawingTextField { Formula = "Prop.Cost", Value = "1.5", NativeFormat = "0", Unit = "NUM", Format = "0.00" } }] }] }
+});
+var inheritanceRoundTrip = DrawingDocument.FromJson(inheritanceDoc.ToJson()).Pages[0].Shapes[0];
+Check(inheritanceRoundTrip.MasterBinding!.SourceShapeId == "source" && inheritanceRoundTrip.MasterBinding.Style[0] == "fill", "live master inheritance channels round trip");
+Check(inheritanceRoundTrip.RichText!.Paragraphs[0].Runs[0].Field!.Unit == "NUM" && inheritanceRoundTrip.RichText.Paragraphs[0].Runs[0].Field!.Value == "1.5", "native field cache and unit round trip");
+Check(JsonSerializer.SerializeToElement(new DrawingMasterChannels { Text = true }, DrawingJsonContext.Default.DrawingMasterChannels).GetProperty("text").GetBoolean(), "trim-safe master restore payload");
+Check(JsonSerializer.SerializeToElement(new DrawingMasterPatch { Name = "New" }, DrawingJsonContext.Default.DrawingMasterPatch).GetProperty("name").GetString() == "New", "trim-safe master update payload");
+Check(typeof(DrawingEditor).GetMethod("SetUserCellValueAsync") is not null && typeof(DrawingEditor).GetMethod("ActivateTextFieldsAsync") is not null, "user-write and live field Blazor APIs");
 Console.WriteLine($"{checks} package-restored .NET contract checks passed.");

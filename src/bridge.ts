@@ -1,4 +1,7 @@
 import { DiagramOperations } from './features.js';
+import { MasterService } from './inheritance.js';
+import { readOfficeTheme } from './office-theme.js';
+import { TextFieldService } from './fields.js';
 import { ShapeSheetService } from './shapesheet.js';
 import type { ContainerOptions } from './features.js';
 import type { DataRecordset, DataGraphic, DiagramTheme, Hyperlink, ShapeDataLink, RichText, Point } from './model.js';
@@ -19,7 +22,7 @@ interface DotNetRuntime { createJSStreamReference(data:Uint8Array|Blob):unknown 
 interface Handle {
   control:DrawingControl; callback?:DotNetCallback; observer:MutationObserver; subscriptions:Unsubscribe[]; disposed:boolean;
   externalVersion:number; suppress:number; scheduled:boolean; pendingRevision:number; sentRevision:number; failed:boolean;
-  sheet?:ShapeSheetService; source?:VisioPackage; table?:ObservableTable; binding?:DiagramBinding; dataSubscription?:Unsubscribe;
+  sheet?:ShapeSheetService; fields?:TextFieldService; source?:VisioPackage; table?:ObservableTable; binding?:DiagramBinding; dataSubscription?:Unsubscribe;
 }
 const handles=new Map<string,Handle>();const utf8=new TextEncoder();const decoder=new TextDecoder('utf-8',{fatal:true});
 function requireHandle(key:string):Handle{const state=handles.get(key);if(!state||state.disposed)throw new DrawingError('DISPOSED','The native diagram handle no longer exists.');return state;}
@@ -60,6 +63,7 @@ export function command(key:string,name:string,args:unknown[]=[]):unknown{
     case 'selectContents': operations.selectContainerContents(String(args[0])); return;
     case 'sheetCells': return sheet().cells(String(args[0]));
     case 'evaluateCell': return sheet().evaluate(String(args[0]),String(args[1]));
+    case 'fieldDiagnostics': return state.fields?.diagnostics??[];
   }
   if(control.readOnly)throw new DrawingError('READ_ONLY','This diagram is read-only.');
   switch(name){
@@ -87,6 +91,13 @@ export function command(key:string,name:string,args:unknown[]=[]):unknown{
     case 'autoLink': return operations.autoLink(control.pageId,String(args[0]),String(args[1]),String(args[2]),args[3] as Record<string,string>);
     case 'richText': engine.update(String(args[0]),{richText:args[1] as RichText}); return;
     case 'editRichText': control.editRichText(String(args[0])); return;
+    case 'officeTheme': { const result=readOfficeTheme(String(args[0])); operations.applyTheme(result.theme,(args[1]??undefined) as string[]|undefined); return result.diagnostics; }
+    case 'sheetUserValue': sheet().setUserValue(String(args[0]),String(args[1]),args[2] as FormulaValue); return;
+    case 'activateFields': return (state.fields??=new TextFieldService(engine,sheet())).activate((args[0]??undefined) as string[]|undefined);
+    case 'deactivateFields': state.fields?.deactivate(args[0] as string[]|undefined); return;
+    case 'updateMaster': new MasterService(engine).update(String(args[0]),args[1] as Parameters<MasterService['update']>[1]); return;
+    case 'restoreMaster': new MasterService(engine).restore(String(args[0]),args[1] as Parameters<MasterService['restore']>[1]); return;
+    case 'detachMaster': new MasterService(engine).detach(String(args[0])); return;
     case 'sheetCell': sheet().setCell(String(args[0]),String(args[1]),args[2] as FormulaValue,args[3] as string|undefined); return;
     case 'activateSheet': return sheet().activate((args[0]??undefined) as string[]|undefined);
     case 'deactivateSheet': sheet().deactivate(args[0] as string[]|undefined); return;
@@ -106,6 +117,6 @@ export async function exportStream(key:string,format='json'):Promise<{revision:n
   requireHandle(key);return{revision,stream:stream(bytes),diagnostics};
 }
 export async function bindRowsStream(key:string,input:DotNetReadStream,keyField:string,mappings:Record<string,string>,twoWay=true):Promise<void>{const state=requireHandle(key),revision=state.control.engine.revision,bytes=await input.arrayBuffer();if(bytes.byteLength>32*1024*1024)throw new DrawingError('DATA_LIMIT','Data source exceeds 32 MiB.');const rows=JSON.parse(decoder.decode(bytes)) as DataRow[];requireHandle(key);if(state.control.engine.revision!==revision)throw new DrawingError('REVISION_CONFLICT','The diagram changed while the data source was transferred.');const table=new ObservableTable(keyField,[],rows);state.binding?.dispose();state.dataSubscription?.();state.table?.dispose();const binding=new DiagramBinding(state.control.engine,table,{pageId:state.control.pageId,mappings,twoWay,removeRowsOnShapeDelete:true});state.table=table;state.binding=binding;state.dataSubscription=table.changed.subscribe(change=>callback(state,'OnDataChanged',change.revision));state.subscriptions.push(binding.errors.subscribe(error=>callback(state,'OnNativeError','DATA_BINDING',error instanceof Error?error.message:String(error))));}
-export function dispose(key:string):void{const state=handles.get(key);if(!state||state.disposed)return;state.disposed=true;handles.delete(key);state.observer.disconnect();state.sheet?.dispose();state.binding?.dispose();state.table?.dispose();state.dataSubscription?.();for(const unsubscribe of state.subscriptions)unsubscribe();state.control.dispose();state.control.engine.dispose();state.callback=undefined;}
+export function dispose(key:string):void{const state=handles.get(key);if(!state||state.disposed)return;state.disposed=true;handles.delete(key);state.observer.disconnect();state.fields?.dispose();state.sheet?.dispose();state.binding?.dispose();state.table?.dispose();state.dataSubscription?.();for(const unsubscribe of state.subscriptions)unsubscribe();state.control.dispose();state.control.engine.dispose();state.callback=undefined;}
 /** Useful to assert native teardown in package-restored hosting tests. */
 export function activeHandleCount():number{return handles.size;}

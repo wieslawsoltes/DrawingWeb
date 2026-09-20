@@ -63,6 +63,20 @@ public partial class DrawingEditor
     public Task<string> DuplicatePageAsync() => FeatureIdAsync("duplicatePage");
     public Task<string> RegisterMasterAsync(string name, string category, DrawingShape shape) => FeatureIdAsync("registerMaster", name, category, shape);
     public Task<string> InsertMasterAsync(string masterId, double x = 100, double y = 100) => FeatureIdAsync("insertMaster", masterId, x, y);
+    /// <summary>Apply a user value, respecting GUARD and supported SETATREF write routing.</summary>
+    public Task SetUserCellValueAsync(string shapeId, string name, double value) => ExecuteAsync("sheetUserValue", shapeId, name, value);
+    /// <summary>Explicitly activate supported text-field formulas. Unsupported fields retain cached text.</summary>
+    public Task<List<DrawingDiagnostic>> ActivateTextFieldsAsync(IReadOnlyList<string>? shapeIds = null)
+        => FeatureResultAsync("activateFields", DrawingJsonContext.Default.ListDrawingDiagnostic, (object?)shapeIds);
+    public Task DeactivateTextFieldsAsync(IReadOnlyList<string>? shapeIds = null) => ExecuteAsync("deactivateFields", (object?)shapeIds);
+    public Task<List<DrawingDiagnostic>> GetTextFieldDiagnosticsAsync()
+        => FeatureResultAsync("fieldDiagnostics", DrawingJsonContext.Default.ListDrawingDiagnostic);
+    public Task UpdateMasterAsync(string masterId, DrawingMasterPatch patch) => ExecuteAsync("updateMaster", masterId, patch);
+    public Task RestoreMasterInheritanceAsync(string shapeId, DrawingMasterChannels? channels = null) => ExecuteAsync("restoreMaster", shapeId, channels);
+    public Task DetachMasterAsync(string shapeId) => ExecuteAsync("detachMaster", shapeId);
+    /// <summary>Import an explicit DrawingML palette and Latin font; this does not infer native Quick Styles.</summary>
+    public Task<List<DrawingDiagnostic>> ApplyOfficeThemeXmlAsync(string xml, IReadOnlyList<string>? shapeIds = null)
+        => FeatureResultAsync("officeTheme", DrawingJsonContext.Default.ListDrawingDiagnostic, xml, shapeIds);
     public Task DistributeAsync(string axis = "horizontal") => ExecuteAsync("distribute", axis);
     public Task FlipAsync(string axis = "horizontal") => ExecuteAsync("flip", axis);
 }

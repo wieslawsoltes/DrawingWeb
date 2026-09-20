@@ -6,7 +6,7 @@ packages=list((root/'artifacts/nuget').glob('*.nupkg'))
 assert len(packages)==1, f'Expected one NuGet package, found {packages}'
 with zipfile.ZipFile(packages[0]) as archive:
     names=archive.namelist()
-    for required in ['lib/net8.0/DrawingWeb.Blazor.dll','lib/net10.0/DrawingWeb.Blazor.dll','staticwebassets/engine/bridge.js','staticwebassets/engine/web.js','staticwebassets/engine/io.js','README.md']:
+    for required in ['lib/net8.0/DrawingWeb.Blazor.dll','lib/net10.0/DrawingWeb.Blazor.dll','staticwebassets/engine/bridge.js','staticwebassets/engine/web.js','staticwebassets/engine/io.js','staticwebassets/engine/inheritance.js','staticwebassets/engine/fields.js','staticwebassets/engine/office-theme.js','README.md']:
         assert required in names, f'Missing {required}'
     nuspec=ET.fromstring(archive.read(next(n for n in names if n.endswith('.nuspec'))))
     actual=next(e.text for e in nuspec.iter() if e.tag.endswith('}version'))

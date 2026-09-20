@@ -1,6 +1,6 @@
 {
   "name": "@wieslawsoltes/drawingweb",
-  "version": "0.1.0-alpha.2",
+  "version": "0.1.0-alpha.3",
   "description": "Data-bound diagram engine, accessible web control, Visio interchange and self-contained Blazor component",
   "type": "module",
   "license": "MIT",
@@ -84,6 +84,26 @@
       "types": "./dist/types/shapesheet.d.ts",
       "import": "./dist/esm/shapesheet.js",
       "require": "./dist/cjs/shapesheet.js"
+    },
+    "./inheritance": {
+      "types": "./dist/types/inheritance.d.ts",
+      "import": "./dist/esm/inheritance.js",
+      "require": "./dist/cjs/inheritance.js"
+    },
+    "./fields": {
+      "types": "./dist/types/fields.d.ts",
+      "import": "./dist/esm/fields.js",
+      "require": "./dist/cjs/fields.js"
+    },
+    "./visio-inheritance": {
+      "types": "./dist/types/visio-inheritance.d.ts",
+      "import": "./dist/esm/visio-inheritance.js",
+      "require": "./dist/cjs/visio-inheritance.js"
+    },
+    "./office-theme": {
+      "types": "./dist/types/office-theme.d.ts",
+      "import": "./dist/esm/office-theme.js",
+      "require": "./dist/cjs/office-theme.js"
     }
   },
   "files": [

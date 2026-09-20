@@ -89,3 +89,16 @@ After `Ready`, the `DrawingEditor` partial API exposes `CreateContainerAsync`, `
 `SetCellAsync` takes a `JsonElement` cached/literal value and an optional formula. Length results use Visio inches (96 drawing pixels per inch). Enrollment persists until deactivation or document replacement; it is not equivalent to a complete native constraint system. `GetCellsAsync` can return cached values with diagnostics for unsupported formulas.
 
 Public feature payloads are serialized through the generated model contract, not reflection or anonymous-type preservation. The shared release-mode Server/WASM exercise creates rich content, a container/callout/comment/link, evaluates a Width cell, refreshes a keyed recordset and exports a stencil. See the current Actions run for qualification results. Feature availability does not change the Visio preservation/rebuild boundary.
+
+
+### Alpha.3 live-feature API
+
+`DrawingShape.MasterBinding` retains live inherited style/cell/text channels through the generated
+JSON contract. `DrawingTextField` retains `Formula`, `Format`, `NativeFormat`, `Value` and `Unit`.
+`UpdateMasterAsync`, `RestoreMasterInheritanceAsync` and `DetachMasterAsync` edit live instances.
+The updated master shape must retain its original source shape IDs. Geometry remains instance-local.
+`SetUserCellValueAsync` differs from `SetCellAsync`: it honors GUARD and supported SETATREF routing;
+`SetCellAsync` is an explicit authoring operation which can replace a guarded formula.
+`ActivateTextFieldsAsync`, `DeactivateTextFieldsAsync` and `GetTextFieldDiagnosticsAsync` control
+opt-in field evaluation. `ApplyOfficeThemeXmlAsync` applies the explicit palette/Latin-font profile,
+not full native Quick Styles. All payloads use source-generated contracts. See `docs/LIVE_PARITY.md`.
