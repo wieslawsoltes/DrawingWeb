@@ -1,35 +1,117 @@
 {
   "name": "@wieslawsoltes/drawingweb",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.2",
   "description": "Data-bound diagram engine, accessible web control, Visio interchange and self-contained Blazor component",
   "type": "module",
   "license": "MIT",
   "author": "DrawingWeb contributors",
-  "repository": { "type": "git", "url": "git+https://github.com/wieslawsoltes/DrawingWeb.git" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wieslawsoltes/DrawingWeb.git"
+  },
   "homepage": "https://wieslawsoltes.github.io/DrawingWeb/",
-  "bugs": { "url": "https://github.com/wieslawsoltes/DrawingWeb/issues" },
+  "bugs": {
+    "url": "https://github.com/wieslawsoltes/DrawingWeb/issues"
+  },
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/types/index.d.ts",
   "unpkg": "./dist/drawingweb.global.js",
   "jsdelivr": "./dist/drawingweb.global.js",
   "exports": {
-    ".": { "types": "./dist/types/index.d.ts", "import": "./dist/esm/index.js", "require": "./dist/cjs/index.js" },
-    "./core": { "types": "./dist/types/core.d.ts", "import": "./dist/esm/core.js", "require": "./dist/cjs/core.js" },
-    "./geometry": { "types": "./dist/types/geometry.d.ts", "import": "./dist/esm/geometry.js", "require": "./dist/cjs/geometry.js" },
-    "./layout": { "types": "./dist/types/layout.d.ts", "import": "./dist/esm/layout.js", "require": "./dist/cjs/layout.js" },
-    "./formula": { "types": "./dist/types/formula.d.ts", "import": "./dist/esm/formula.js", "require": "./dist/cjs/formula.js" },
-    "./data": { "types": "./dist/types/data.d.ts", "import": "./dist/esm/data.js", "require": "./dist/cjs/data.js" },
-    "./io": { "types": "./dist/types/io.d.ts", "import": "./dist/esm/io.js", "require": "./dist/cjs/io.js" },
-    "./web": { "types": "./dist/types/web.d.ts", "import": "./dist/esm/web.js", "require": "./dist/cjs/web.js" },
-    "./bridge": { "types": "./dist/types/bridge.d.ts", "import": "./dist/esm/bridge.js", "require": "./dist/cjs/bridge.js" },
-    "./mvvm": { "types": "./dist/types/mvvm.d.ts", "import": "./dist/esm/mvvm.js", "require": "./dist/cjs/mvvm.js" },
-    "./package.json": "./package.json"
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/esm/index.js",
+      "require": "./dist/cjs/index.js"
+    },
+    "./core": {
+      "types": "./dist/types/core.d.ts",
+      "import": "./dist/esm/core.js",
+      "require": "./dist/cjs/core.js"
+    },
+    "./geometry": {
+      "types": "./dist/types/geometry.d.ts",
+      "import": "./dist/esm/geometry.js",
+      "require": "./dist/cjs/geometry.js"
+    },
+    "./layout": {
+      "types": "./dist/types/layout.d.ts",
+      "import": "./dist/esm/layout.js",
+      "require": "./dist/cjs/layout.js"
+    },
+    "./formula": {
+      "types": "./dist/types/formula.d.ts",
+      "import": "./dist/esm/formula.js",
+      "require": "./dist/cjs/formula.js"
+    },
+    "./data": {
+      "types": "./dist/types/data.d.ts",
+      "import": "./dist/esm/data.js",
+      "require": "./dist/cjs/data.js"
+    },
+    "./io": {
+      "types": "./dist/types/io.d.ts",
+      "import": "./dist/esm/io.js",
+      "require": "./dist/cjs/io.js"
+    },
+    "./web": {
+      "types": "./dist/types/web.d.ts",
+      "import": "./dist/esm/web.js",
+      "require": "./dist/cjs/web.js"
+    },
+    "./bridge": {
+      "types": "./dist/types/bridge.d.ts",
+      "import": "./dist/esm/bridge.js",
+      "require": "./dist/cjs/bridge.js"
+    },
+    "./mvvm": {
+      "types": "./dist/types/mvvm.d.ts",
+      "import": "./dist/esm/mvvm.js",
+      "require": "./dist/cjs/mvvm.js"
+    },
+    "./package.json": "./package.json",
+    "./features": {
+      "types": "./dist/types/features.d.ts",
+      "import": "./dist/esm/features.js",
+      "require": "./dist/cjs/features.js"
+    },
+    "./text": {
+      "types": "./dist/types/text.d.ts",
+      "import": "./dist/esm/text.js",
+      "require": "./dist/cjs/text.js"
+    },
+    "./shapesheet": {
+      "types": "./dist/types/shapesheet.d.ts",
+      "import": "./dist/esm/shapesheet.js",
+      "require": "./dist/cjs/shapesheet.js"
+    }
   },
-  "files": ["dist", "src", "docs", "sample", "blazor/README.md", "README.md", "LICENSE", "NOTICE", "CHANGELOG.md"],
+  "files": [
+    "dist",
+    "src",
+    "docs",
+    "sample",
+    "blazor/README.md",
+    "README.md",
+    "LICENSE",
+    "NOTICE",
+    "CHANGELOG.md"
+  ],
   "sideEffects": false,
-  "engines": { "node": ">=22.16" },
-  "keywords": ["diagram", "drawing", "visio", "vsdx", "flowchart", "data-binding", "web-components", "blazor", "mvvm"],
+  "engines": {
+    "node": ">=22.16"
+  },
+  "keywords": [
+    "diagram",
+    "drawing",
+    "visio",
+    "vsdx",
+    "flowchart",
+    "data-binding",
+    "web-components",
+    "blazor",
+    "mvvm"
+  ],
   "scripts": {
     "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit",
@@ -41,6 +123,12 @@
     "check": "npm run build && npm test && npm run test:package && npm run build:demo",
     "prepack": "npm run build"
   },
-  "devDependencies": { "typescript": "5.8.3" },
-  "publishConfig": { "access": "public", "provenance": true, "tag": "alpha" }
+  "devDependencies": {
+    "typescript": "5.8.3"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true,
+    "tag": "alpha"
+  }
 }

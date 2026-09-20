@@ -81,3 +81,11 @@ The underlying native engine remains accessible through the bridge for advanced 
 `BrowserDocumentStore.save(key, document, expectedRevision)` performs a read/compare/write in one IndexedDB transaction, including cross-tab conflicts. The studio reports unavailable storage or conflicts instead of claiming it saved. Imported VSDX source packages are held in memory and require file export; storing only normalized JSON would lose the original package-preservation context.
 
 CSV reading supports BOM, quoted delimiters, escaped quotes and multiline fields. Export protects spreadsheet-formula prefixes by default. Set `protectFormulas: false` only when your consumer explicitly requires literal executable spreadsheet expressions. CSV remains a table interchange format, not a fully typed schema.
+
+## Embedded recordsets and Visio row maps
+
+`DiagramOperations.upsertRecordset`, `linkData`, `autoLink` and `refreshData` operate on document-owned recordset snapshots. String and numeric keys remain distinct. Exact linking rejects ambiguity and missing match columns; explicit refresh reports missing linked rows instead of rebinding by array position. Projection is transactional, and no-op refresh does not add history. These recordsets are an explicit source-to-shape projection, not the two-way external table transport described above.
+
+ADO XML codecs preserve supported typed columns and use schema names independently from XML-safe field identifiers. VSDX writers emit the native recordsets collection, ADO recordset parts, supported primary-key/row-key mappings and per-shape RowMaps. Native DataColumn names select shape property names; source column identity is separate. A text/geometry mapping has no identical native property mapping and emits a projection diagnostic. Composite keys, arbitrary provider schemas, JSON-valued native columns and unlinked native primary-key schemas have documented limits and diagnostics.
+
+Data graphics evaluate color, label, bar and threshold-icon rules at presentation time. They do not mutate the source row or cached shape style. They render in Canvas/SVG/PNG; native Visio data-graphic master reconstruction is not implemented. The studio's Data ribbon can capture the live table, import JSON/ADO snapshots, link exact records, refresh and attach graphics. No embedded connection string or query is executed by any import.

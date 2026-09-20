@@ -10,11 +10,11 @@ namespace DrawingWeb.Blazor;
 // for ElementReference, DotNetObjectReference and stream references.
 internal static class DrawingInterop
 {
-    internal static JsonElement Options(bool readOnly, bool grid, bool snap, double gridSize, string ariaLabel, string? pageId = null)
+    internal static JsonElement Options(bool readOnly, bool grid, bool snap, double gridSize, string ariaLabel, string? pageId = null, bool guides = true)
         => JsonSerializer.SerializeToElement(new DrawingControlSettings
         {
             ReadOnly = readOnly, Grid = grid, Snap = snap, GridSize = gridSize,
-            AriaLabel = ariaLabel, PageId = pageId
+            AriaLabel = ariaLabel, PageId = pageId, Guides = guides
         }, DrawingInteropJsonContext.Default.DrawingControlSettings);
 
     internal static JsonElement Mappings(IReadOnlyDictionary<string, string> mappings)
@@ -82,6 +82,9 @@ internal static class DrawingInterop
                 foreach (var item in sequence) Write(writer, item, ref budget);
                 writer.WriteEndArray(); break;
             default:
+                // Only the explicitly generated model set is accepted; no reflection fallback.
+                var contract = DrawingJsonContext.Default.GetTypeInfo(value.GetType());
+                if (contract is not null) { JsonSerializer.Serialize(writer, value, contract); break; }
                 throw new ArgumentException("Unsupported command argument. Pass JSON scalars, arrays, dictionaries, DrawingWeb models, or JsonSerializer.SerializeToElement(value, sourceGeneratedJsonTypeInfo).");
         }
     }
@@ -92,6 +95,7 @@ internal sealed class DrawingControlSettings
     public bool ReadOnly { get; set; }
     public bool Grid { get; set; }
     public bool Snap { get; set; }
+    public bool Guides { get; set; }
     public double GridSize { get; set; }
     public string AriaLabel { get; set; } = "Diagram editor";
     public string? PageId { get; set; }

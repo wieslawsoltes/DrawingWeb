@@ -11,6 +11,10 @@ public sealed record DrawingDocument
     public List<DrawingPage> Pages { get; init; } = [new()];
     public List<DrawingMaster> Masters { get; init; } = [];
     public Dictionary<string, JsonElement> Metadata { get; init; } = [];
+    public List<DrawingComment>? Comments { get; set; }
+    public List<DrawingRecordset>? Recordsets { get; set; }
+    public List<DrawingDataGraphic>? DataGraphics { get; set; }
+    public DrawingTheme? Theme { get; set; }
     // Extension data must be populated after construction. An init accessor makes
     // source generation treat it as a constructor argument, which STJ rejects.
     [JsonExtensionData] public Dictionary<string, JsonElement>? Extensions { get; set; }
@@ -24,6 +28,10 @@ public sealed record DrawingPage
     public double Width { get; set; } = 1200;
     public double Height { get; set; } = 800;
     public string Background { get; set; } = "#ffffff";
+    public string? BackgroundPageId { get; set; }
+    public bool? IsBackground { get; set; }
+    public string? Unit { get; set; }
+    public DrawingGuides? Guides { get; set; }
     public List<DrawingShape> Shapes { get; init; } = [];
     public List<DrawingLayer> Layers { get; init; } = [new()];
     [JsonExtensionData] public Dictionary<string, JsonElement>? Extensions { get; set; }
@@ -53,6 +61,16 @@ public sealed record DrawingShape
     public DrawingEndpoint? Source { get; set; }
     public DrawingEndpoint? Target { get; set; }
     public string? Routing { get; set; }
+    public int? SheetId { get; set; }
+    public DrawingRichText? RichText { get; set; }
+    public DrawingTextBlock? TextBlock { get; set; }
+    public DrawingContainer? Container { get; set; }
+    public string? CalloutTargetId { get; set; }
+    public DrawingEmbeddedImage? Image { get; set; }
+    public List<DrawingHyperlink>? Hyperlinks { get; set; }
+    public List<DrawingDataLink>? DataLinks { get; set; }
+    public string? DataGraphicId { get; set; }
+    public DrawingThemeBinding? Theme { get; set; }
     [JsonExtensionData] public Dictionary<string, JsonElement>? Extensions { get; set; }
 }
 public sealed record DrawingStyle
@@ -66,6 +84,11 @@ public sealed record DrawingStyle
     public double FontSize { get; set; } = 13;
     public bool Bold { get; set; }
     public bool Italic { get; set; }
+    public bool? Underline { get; set; }
+    public bool? Strike { get; set; }
+    public string? VerticalAlign { get; set; }
+    public double? Padding { get; set; }
+    public double? LineSpacing { get; set; }
     public string Align { get; set; } = "center";
     public List<double> Dash { get; set; } = [];
     public bool StartArrow { get; set; }
@@ -113,4 +136,29 @@ public sealed record DrawingImport(long Revision, List<DrawingDiagnostic> Diagno
 [JsonSerializable(typeof(List<DrawingShape>))]
 [JsonSerializable(typeof(List<Dictionary<string, JsonElement>>))]
 [JsonSerializable(typeof(Dictionary<string, JsonElement>))]
+[JsonSerializable(typeof(DrawingRichText))]
+[JsonSerializable(typeof(DrawingTextParagraph))]
+[JsonSerializable(typeof(DrawingTextRun))]
+[JsonSerializable(typeof(DrawingRunStyle))]
+[JsonSerializable(typeof(DrawingTextField))]
+[JsonSerializable(typeof(DrawingTextBlock))]
+[JsonSerializable(typeof(DrawingContainer))]
+[JsonSerializable(typeof(DrawingContainerOptions))]
+[JsonSerializable(typeof(DrawingEmbeddedImage))]
+[JsonSerializable(typeof(DrawingHyperlink))]
+[JsonSerializable(typeof(DrawingComment))]
+[JsonSerializable(typeof(DrawingCommentReply))]
+[JsonSerializable(typeof(DrawingRecordset))]
+[JsonSerializable(typeof(DrawingDataColumn))]
+[JsonSerializable(typeof(DrawingDataLink))]
+[JsonSerializable(typeof(DrawingDataGraphic))]
+[JsonSerializable(typeof(DrawingDataGraphicRule))]
+[JsonSerializable(typeof(DrawingDataGraphicCase))]
+[JsonSerializable(typeof(DrawingDataGraphicThreshold))]
+[JsonSerializable(typeof(DrawingTheme))]
+[JsonSerializable(typeof(DrawingThemeBinding))]
+[JsonSerializable(typeof(DrawingGuides))]
+[JsonSerializable(typeof(DrawingRefreshResult))]
+[JsonSerializable(typeof(List<DrawingSheetCell>))]
+[JsonSerializable(typeof(List<DrawingDiagnostic>))]
 public partial class DrawingJsonContext : JsonSerializerContext { }

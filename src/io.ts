@@ -1,3 +1,6 @@
+import { DW_NAMESPACE, structuralIndex, readShapeExtensions, writeShapeExtensions, readStructuralRelationships, writeComments, readComments } from './visio-shapes.js';
+import { readRecordsets, writeRecordsets } from './visio-data.js';
+export { readAdoRecordset, writeAdoRecordset } from './visio-data.js';
 import { DiagramEngine } from './core.js';
 import { clone, createDocument, createPage, createShape, DEFAULT_STYLE, DrawingError, parseDocument, validateDocument } from './model.js';
 import type { Diagnostic, DiagramDocument, Json, Matrix, Page, Point, Shape, ShapeStyle } from './model.js';
@@ -46,11 +49,11 @@ function relationships(entries:ReadonlyMap<string,Uint8Array>,part:string):Relat
   const seen=new Set<string>();return elements(root,'Relationship').map(node=>{const id=node.attributes['Id']??'',external=node.attributes['TargetMode']==='External';if(!id||seen.has(id))throw new DrawingError('OPC_RELATIONSHIP_ID','Duplicate or missing relationship ID.');seen.add(id);return{id,type:node.attributes['Type']??'',external,target:external?node.attributes['Target']??'':resolvePart(part,node.attributes['Target']??'')};});
 }
 function readPart(entries:ReadonlyMap<string,Uint8Array>,part:string):XmlElement{const bytes=entries.get(part);if(!bytes)throw new DrawingError('OPC_MISSING_PART',`Missing package part: ${part}`);return parseXml(dec.decode(bytes));}
-interface MasterXml{metadata:XmlElement;root:XmlElement;byId:Map<string,XmlElement>}
+interface MasterXml{part?:string;metadata:XmlElement;root:XmlElement;byId:Map<string,XmlElement>}
 interface ShapeSource{part:string;visioId:string;parentHeight:number;width:number;height:number;locPinX:number;locPinY:number;flipX:number;flipY:number;richText:boolean}
 interface PageSource{part:string;visioId:string}
 interface ReadContext{
-  document:XmlElement;diagnostics:Diagnostic[];styles:Map<string,XmlElement>;masters:Map<string,MasterXml>;
+  entries?:ReadonlyMap<string,Uint8Array>;document:XmlElement;diagnostics:Diagnostic[];styles:Map<string,XmlElement>;masters:Map<string,MasterXml>;
   colors:Map<string,string>;fonts:Map<string,string>;shapeSources:Map<string,ShapeSource>;pageSources:Map<string,PageSource>;
 }
 function diagnostic(ctx:ReadContext,code:string,message:string,part?:string,shapeId?:string):void{ctx.diagnostics.push({code,severity:'warning',message,part,shapeId});}
@@ -105,12 +108,19 @@ function readShape(ctx:ReadContext,source:XmlElement,pageId:string,part:string,p
   if(flipX<0||flipY<0)shape.transform=[flipX,0,0,flipY,flipX<0?width:0,flipY<0?height:0];
   shape.cells=Object.fromEntries([...cells(node)].map(([name,cell_])=>[name,{value:cell_.attributes['V']??'',formula:cell_.attributes['F'],unit:cell_.attributes['U']}]).filter(([name])=>!['__proto__','constructor','prototype'].includes(name as string)));
   shape.path=readGeometry(ctx,node,width,height,part,shapeId)||undefined;
-  if(!shape.path&&!hasChildren){shape.kind=shape.text?'text':'rectangle';if(first(node,'ForeignData'))diagnostic(ctx,'FOREIGN_OBJECT_PLACEHOLDER','Embedded raster/OLE/foreign graphics are preserved, but currently displayed as a frame.',part,shapeId);}
+  if(!shape.path&&!hasChildren){shape.kind=shape.text?'text':'rectangle';}
   const properties=section(node,'Property');if(properties)for(const row of elements(properties,'Row')){let key=row.attributes['N']??value(row,'Label',`Property${row.attributes['IX']??''}`);if(['__proto__','constructor','prototype'].includes(key))key=`property_${key}`;const raw=value(row,'Value');const type=numberCell(row,'Type');shape.data[key]=type===2?numeric(raw,0):type===3?raw==='1'||raw.toLowerCase()==='true':raw.replace(/^"(.*)"$/s,'$1');}
   const layer=value(node,'LayerMember');if(layer)shape.layerId=`layer:${layer.split(';')[0]}`;shape.locked=numberCell(node,'LockMoveX')===1&&numberCell(node,'LockMoveY')===1;
   const connection=section(node,'Connection');if(connection)shape.ports=elements(connection,'Row').map((row,index)=>({id:row.attributes['N']??row.attributes['IX']??String(index),x:numberCell(row,'X')*96/Math.max(1,width),y:1-numberCell(row,'Y')*96/Math.max(1,height)}));
-  const textMarkers=text?elements(text):[];if(textMarkers.length>1||textMarkers.some(mark=>localName(mark.name)==='fld'))diagnostic(ctx,'RICH_TEXT_APPROXIMATED','Mixed character/paragraph formatting is flattened for display; original formatting remains in the source package.',part,shapeId);
-  if(numberCell(node,'TxtAngle')!==0)diagnostic(ctx,'TEXT_TRANSFORM_APPROXIMATED','Independent text-block rotation is not applied by this renderer.',part,shapeId);
+  const textMarkers=text?elements(text):[];
+  readShapeExtensions(effectiveShape(node,inheritedStyle(ctx,node,'TextStyle')),shape,font=>ctx.fonts.get(font)??'Arial, sans-serif',input=>resolveColor(ctx,input,'#000000'),(code,message)=>diagnostic(ctx,code,message,part,shapeId));
+  if(instanceScope)shape.sheetId=undefined; // Master-local IDs are not page-local Sheet.N references.
+  const foreign=first(source,'ForeignData')??(masterShape?first(masterShape,'ForeignData'):undefined);
+  if(foreign&&ctx.entries){const owner=first(source,'ForeignData')?part:master?.part??part;const rel=relationships(ctx.entries,owner).find(r=>r.id===relationId(foreign)&&!r.external);const bytes=rel?ctx.entries.get(rel.target):undefined;
+    if(bytes&&bytes.length<=16*1024*1024){const mime=bytes[0]===0x89&&bytes[1]===0x50?'image/png':bytes[0]===0xff&&bytes[1]===0xd8?'image/jpeg':String.fromCharCode(...bytes.slice(0,3))==='GIF'?'image/gif':String.fromCharCode(...bytes.slice(0,4))==='RIFF'&&String.fromCharCode(...bytes.slice(8,12))==='WEBP'?'image/webp':undefined;
+      if(mime){let binary='';for(let offset=0;offset<bytes.length;offset+=8192)binary+=String.fromCharCode(...bytes.subarray(offset,offset+8192));shape.image={source:`data:${mime};base64,${btoa(binary)}`,fit:'stretch',alt:shape.text};shape.kind='image';}else diagnostic(ctx,'FOREIGN_IMAGE_UNSUPPORTED','Embedded EMF/WMF/OLE or unknown image format remains opaque.',part,shapeId);
+    }
+  }
   if(source.attributes['OneD']==='1'||cells(node).has('BeginX')&&cells(node).has('EndX')){
     shape.kind='connector';shape.routing='manual';
     if(shape.path){const segments=parsePath(shape.path);shape.points=segments.filter(segment=>segment.kind!=='close').map(segment=>segment.end);if(segments.some(segment=>segment.kind==='cubic'))diagnostic(ctx,'CURVED_CONNECTOR_APPROXIMATED','Curved connector controls are retained in XML but displayed as a polyline.',part,shapeId);}
@@ -130,6 +140,7 @@ function readPage(ctx:ReadContext,metadata:XmlElement,contents:XmlElement,part:s
   page.shapes=elements(first(contents,'Shapes')??element('none'),'Shape').map(shape=>readShape(ctx,shape,pageId,part,page.height));
   const indexShapes=new Map<string,Shape>();const visit=(shapes:Shape[])=>{for(const shape of shapes){indexShapes.set(shape.id,shape);if(shape.children)visit(shape.children);}};visit(page.shapes);
   for(const connect of elements(first(contents,'Connects')??element('none'),'Connect')){const source=indexShapes.get(`${pageId}:s${connect.attributes['FromSheet']}`),target=`${pageId}:s${connect.attributes['ToSheet']}`;if(!source||!indexShapes.has(target))continue;const from=connect.attributes['FromCell']??'';const endpoint={shapeId:target};if(from==='BeginX'||from==='BeginY')source.source=endpoint;else if(from==='EndX'||from==='EndY')source.target=endpoint;}
+  page.isBackground=metadata.attributes['Background']==='1'||metadata.attributes['Background']==='true';if(metadata.attributes['BackPage']!==undefined&&metadata.attributes['BackPage']!=='-1')page.backgroundPageId=`visio-p${metadata.attributes['BackPage']}`;readStructuralRelationships(page,ctx.diagnostics);
   ctx.pageSources.set(pageId,{part,visioId});return page;
 }
 function relationId(node:XmlElement):string|undefined{const rel=first(node,'Rel');if(!rel)return;return Object.entries(rel.attributes).find(([name])=>localName(name)==='id')?.[1];}
@@ -146,6 +157,7 @@ export class VisioPackage{
     if([...this.entries.keys()].some(name=>name.startsWith('_xmlsignatures/')))throw new DrawingError('SIGNED_PACKAGE_EDIT','Editing a signed package would invalidate its signature. Export a new drawing explicitly.');
     const unsupported=(message:string):never=>{throw new DrawingError('PRESERVATION_UNSUPPORTED',message+' Use explicit rebuild export only after reviewing the compatibility report.');};
     if(document.title!==this.baseline.title||!same(document.metadata,this.baseline.metadata)||!same(document.masters,this.baseline.masters)||document.pages.length!==this.baseline.pages.length)unsupported('Preserve mode does not rebuild document metadata, masters, or page topology.');
+    for(const key of new Set([...Object.keys(document),...Object.keys(this.baseline)]))if(key!=='pages'&&!same((document as unknown as Record<string,unknown>)[key],(this.baseline as unknown as Record<string,unknown>)[key]))unsupported(`Changing document.${key} requires reconstruction.`);
     const modified=new Map<string,XmlElement>(),get=(part:string)=>{let node=modified.get(part);if(!node){node=readPart(this.entries,part);modified.set(part,node);}return node;};
     const compareShapes=(before:Shape[],after:Shape[])=>{
       if(before.length!==after.length||before.some((shape,i)=>shape.id!==after[i]!.id))unsupported('Shape insertion, deletion, regrouping and z-order changes require a new-package export.');
@@ -166,6 +178,7 @@ export class VisioPackage{
     };
     for(let i=0;i<document.pages.length;i++){
       const old=this.baseline.pages[i]!,page=document.pages[i]!;if(old.id!==page.id||old.width!==page.width||old.height!==page.height||old.background!==page.background||!same(old.layers,page.layers))unsupported('Page identity, size, background and layer changes require reconstruction.');
+      for(const key of new Set([...Object.keys(old),...Object.keys(page)]))if(!['name','shapes'].includes(key)&&!same((old as unknown as Record<string,unknown>)[key],(page as unknown as Record<string,unknown>)[key]))unsupported(`Changing page.${key} requires reconstruction.`);
       if(old.name!==page.name){const source=this.context.pageSources.get(old.id),root=get(this.pagesPart),meta=elements(root,'Page').find(p=>p.attributes['ID']===source?.visioId);if(!meta)unsupported('Page metadata is unavailable.');meta!.attributes['Name']=page.name;meta!.attributes['NameU']=page.name;}
       compareShapes(old.shapes,page.shapes);
     }
@@ -177,18 +190,25 @@ export async function readVsdx(bytes:Uint8Array,options:VisioReadOptions={}):Pro
   const contentTypes=readPart(entries,'[Content_Types].xml');if(localName(contentTypes.name)!=='Types')throw new DrawingError('OPC_CONTENT_TYPES','Invalid content-type document.');
   const macros=[...entries.keys()].some(name=>/vbaProject\.bin$/i.test(name));if(macros&&!options.allowMacroPreservation)throw new DrawingError('VISIO_MACROS','Macro-enabled drawings require explicit allowMacroPreservation; macros are never executed.');
   const rootRels=relationships(entries,''),docRel=rootRels.find(rel=>rel.type===VREL+'document'&&!rel.external);if(!docRel)throw new DrawingError('VISIO_DOCUMENT_REL','No internal Visio document relationship was found.');
-  const documentRoot=readPart(entries,docRel.target),ctx=makeContext(documentRoot);if(localName(documentRoot.name)!=='VisioDocument')throw new DrawingError('VISIO_ROOT','Expected a VisioDocument part.');
+  const documentRoot=readPart(entries,docRel.target),ctx=makeContext(documentRoot);ctx.entries=entries;if(localName(documentRoot.name)!=='VisioDocument')throw new DrawingError('VISIO_ROOT','Expected a VisioDocument part.');
   const docRels=relationships(entries,docRel.target);for(const rel of [...rootRels,...docRels])if(rel.external)diagnostic(ctx,'EXTERNAL_RELATIONSHIP','An external relationship was retained without being fetched.',docRel.target);
   const mastersRel=docRels.find(rel=>rel.type===VREL+'masters'&&!rel.external);
-  if(mastersRel){const masters=readPart(entries,mastersRel.target),rels=relationships(entries,mastersRel.target);for(const metadata of elements(masters,'Master')){const relation=rels.find(r=>r.id===relationId(metadata)&&!r.external);if(!relation)continue;const contents=readPart(entries,relation.target),root=elements(first(contents,'Shapes')??element('none'),'Shape')[0];if(root){const byId=new Map([root,...descendants(root,'Shape')].map(s=>[s.attributes['ID']??'',s]));ctx.masters.set(metadata.attributes['ID']??'',{metadata,root,byId});}}}
-  const pagesRel=docRels.find(rel=>rel.type===VREL+'pages'&&!rel.external);if(!pagesRel)throw new DrawingError('VISIO_PAGES','This drawing profile requires a pages part. Stencil-only packages need explicit instantiation into a drawing.');
-  const pages=readPart(entries,pagesRel.target),pageRels=relationships(entries,pagesRel.target),document=createDocument('Imported Visio drawing');document.id='visio-document';document.pages=[];
+  if(mastersRel){const masters=readPart(entries,mastersRel.target),rels=relationships(entries,mastersRel.target);for(const metadata of elements(masters,'Master')){const relation=rels.find(r=>r.id===relationId(metadata)&&!r.external);if(!relation)continue;const contents=readPart(entries,relation.target),root=elements(first(contents,'Shapes')??element('none'),'Shape')[0];if(root){const byId=new Map([root,...descendants(root,'Shape')].map(s=>[s.attributes['ID']??'',s]));ctx.masters.set(metadata.attributes['ID']??'',{metadata,root,byId,part:relation.target});}}}
+  const pagesRel=docRels.find(rel=>rel.type===VREL+'pages'&&!rel.external);if(!pagesRel&&!ctx.masters.size)throw new DrawingError('VISIO_PAGES','No pages or usable stencil masters were found.');
+  const pages=pagesRel?readPart(entries,pagesRel.target):element('Pages'),pageRels=pagesRel?relationships(entries,pagesRel.target):[],document=createDocument('Imported Visio drawing');document.id='visio-document';document.pages=[];
   for(const[pageIndex,metadata]of elements(pages,'Page').entries()){const rel=pageRels.find(r=>r.id===relationId(metadata)&&!r.external);if(!rel)throw new DrawingError('VISIO_PAGE_REL','A page relationship is missing.');document.pages.push(readPage(ctx,metadata,readPart(entries,rel.target),rel.target,pageIndex));}
   const coreRel=rootRels.find(r=>r.type.endsWith('/metadata/core-properties')&&!r.external);if(coreRel){const core=readPart(entries,coreRel.target),title=first(core,'title');if(title)document.title=textContent(title)||document.title;}
   const dataParts=[...entries.keys()].filter(name=>/data(recordsets?|connections?)?/i.test(name)&&/\.xml$/i.test(name));if(dataParts.length){document.metadata['visioDataParts']=dataParts;diagnostic(ctx,'EXTERNAL_DATA_PRESERVED','Visio recordsets/connections are retained in the package. Database refresh uses DrawingWeb DataSource adapters, not native Visio drivers.');}
   if(macros)diagnostic(ctx,'MACROS_PRESERVED','VBA bytes are retained and are never executed. Keep the macro-enabled file extension when saving.');
-  for(const[id_,master]of ctx.masters){const sourceCount=ctx.shapeSources.size;const shape=readShape(ctx,master.root,`master-${id_}`,`masters/${id_}`,numberCell(master.root,'Height',1)*96,master);document.masters.push({id:`master:${id_}`,name:master.metadata.attributes['Name']??master.metadata.attributes['NameU']??`Master ${id_}`,category:'Imported Visio',shape});if(ctx.shapeSources.size>sourceCount)for(const key of [...ctx.shapeSources.keys()])if(key.startsWith(`master-${id_}:`))ctx.shapeSources.delete(key);}
-  validateDocument(document);return new VisioPackage(document,ctx.diagnostics,bytes.slice(),entries,ctx,pagesRel.target);
+  for(const[id_,master]of ctx.masters){const sourceCount=ctx.shapeSources.size;const shape=readShape(ctx,master.root,`master-${id_}`,master.part??`masters/${id_}`,numberCell(master.root,'Height',1)*96,master);readStructuralRelationships(createPage('Master',{shapes:[shape]}),ctx.diagnostics);document.masters.push({id:`master:${id_}`,name:master.metadata.attributes['Name']??master.metadata.attributes['NameU']??`Master ${id_}`,category:'Imported Visio',shape});if(ctx.shapeSources.size>sourceCount)for(const key of [...ctx.shapeSources.keys()])if(key.startsWith(`master-${id_}:`))ctx.shapeSources.delete(key);}
+  if(!document.pages.length){document.pages.push(createPage('Stencil preview'));document.metadata['visioPackageKind']='stencil';diagnostic(ctx,'STENCIL_LIBRARY','A stencil library was opened. Insert a master into a drawing to edit an instance.');}
+  for(const page of document.pages)if(page.backgroundPageId&&!document.pages.some(p=>p.id===page.backgroundPageId)){diagnostic(ctx,'BACKGROUND_MISSING','A missing background-page reference was left inactive.');page.backgroundPageId=undefined;}
+  readComments(documentRoot,document);
+  const commentsRel=docRels.find(r=>r.type===VREL+'comments'&&!r.external);
+  if(commentsRel)readComments(readPart(entries,commentsRel.target),document);
+  const recordsRel=docRels.find(r=>r.type===VREL+'recordsets'&&!r.external);
+  if(recordsRel){const records=readPart(entries,recordsRel.target),links=relationships(entries,recordsRel.target);readRecordsets(records,document,node=>{const rel=links.find(r=>r.id===relationId(node)&&!r.external);return rel?readPart(entries,rel.target):undefined;},ctx.diagnostics);}
+  validateDocument(document);return new VisioPackage(document,ctx.diagnostics,bytes.slice(),entries,ctx,pagesRel?.target??'');
 }
 function applyStyle(node:XmlElement,style:ShapeStyle,before?:ShapeStyle):void{
   const changed=(key:keyof ShapeStyle)=>!before||!same(style[key],before[key]);
@@ -217,7 +237,9 @@ function visioColor(color:string,fallback:string):string{
   return fallback;
 }
 function safeColor(color:string,fallback:string):string{return /^(#[\da-f]{3,8}|[a-z]+|rgba?\([\d.,%\s]+\)|hsla?\([\d.,%\s]+\))$/i.test(color)&&!color.toLowerCase().includes('url')?color:fallback;}
-interface ExportPage{metadata:XmlElement;contents:XmlElement;part:string}
+interface ExportPage{metadata:XmlElement;contents:XmlElement;part:string;ids:Map<string,number>}
+function numericShapeIds(page:Page):Map<string,number>{const result=new Map<string,number>(),used=new Set<number>();const shapes:Shape[]=[];const visit=(items:Shape[])=>{for(const shape of items){shapes.push(shape);shape.children&&visit(shape.children);}};visit(page.shapes);for(const shape of shapes)if(shape.sheetId&&!used.has(shape.sheetId)){used.add(shape.sheetId);result.set(shape.id,shape.sheetId);}let next=1;for(const shape of shapes)if(!result.has(shape.id)){while(used.has(next))next++;result.set(shape.id,next);used.add(next++);}return result;}
+function documentFonts(document:DiagramDocument):Map<string,number>{const fonts=new Map<string,number>([['Arial',0]]);const visit=(items:Shape[])=>{for(const shape of items){if(!fonts.has(shape.style.fontFamily))fonts.set(shape.style.fontFamily,fonts.size);for(const para of shape.richText?.paragraphs??[])for(const run of para.runs)if(run.style?.fontFamily&&!fonts.has(run.style.fontFamily))fonts.set(run.style.fontFamily,fonts.size);shape.children&&visit(shape.children);}};document.pages.forEach(p=>visit(p.shapes));document.masters.forEach(m=>visit([m.shape]));return fonts;}
 function exportDiagnostic(options:VisioExportOptions,code:string,message:string):void{const report:Diagnostic={code,severity:'warning',message};if(options.strict)throw new DrawingError(code,message);options.onDiagnostic?.(report);}
 function decompose(matrix:Matrix):{sx:number;sy:number;rotation:number;shear:number}{const sx=Math.hypot(matrix[0],matrix[1]);return{sx,sy:sx?(matrix[0]*matrix[3]-matrix[1]*matrix[2])/sx:0,rotation:Math.atan2(matrix[1],matrix[0]),shear:sx?(matrix[0]*matrix[2]+matrix[1]*matrix[3])/sx:0};}
 function geometrySection(segments:PathSegment[],width:number,height:number):XmlElement{
@@ -225,9 +247,9 @@ function geometrySection(segments:PathSegment[],width:number,height:number):XmlE
   for(const segment of segments){if(segment.kind==='cubic')rows.push(element('Row',{T:'RelCubBezTo',IX:index++},[cell('X',segment.end.x/Math.max(width,1)),cell('Y',1-segment.end.y/Math.max(height,1)),cell('A',segment.a.x/Math.max(width,1)),cell('B',1-segment.a.y/Math.max(height,1)),cell('C',segment.b.x/Math.max(width,1)),cell('D',1-segment.b.y/Math.max(height,1))]));else rows.push(element('Row',{T:segment.kind==='move'?'MoveTo':'LineTo',IX:index++},pointCells(segment.end)));}
   return element('Section',{N:'Geometry',IX:0},[cell('NoFill',0),cell('NoLine',0),...rows]);
 }
-function buildExportPages(document:DiagramDocument,options:VisioExportOptions):ExportPage[]{
+function buildExportPages(document:DiagramDocument,options:VisioExportOptions,fonts=documentFonts(document)):ExportPage[]{
   const engine=new DiagramEngine(document,{historyLimit:0});try{return document.pages.map((page,pageIndex)=>{
-    const numericIds=new Map<string,number>();let nextId=1;const reserve=(shapes:Shape[])=>shapes.forEach(s=>{numericIds.set(s.id,nextId++);if(s.children)reserve(s.children);});reserve(page.shapes);
+    const numericIds=numericShapeIds(page),incoming=structuralIndex(page);
     const connections:XmlElement[]=[];
     const emit=(shape:Shape,parentHeight:number,pre:Matrix=IDENTITY):XmlElement=>{
       let matrix=multiply(pre,localMatrix(shape)),d=decompose(matrix),width=shape.width*Math.abs(d.sx),height=shape.height*Math.abs(d.sy),center=transformPoint(matrix,{x:shape.width/2,y:shape.height/2});let rotation=d.rotation,flipY=d.sy<0;
@@ -252,25 +274,59 @@ function buildExportPages(document:DiagramDocument,options:VisioExportOptions):E
       if(shape.visible===false)exportDiagnostic(options,'SHAPE_VISIBILITY','Per-shape visibility is not a standard Visio display flag; use an invisible layer for interchange.');
       if(Object.keys(shape.data).length)node.children.push(element('Section',{N:'Property'},Object.entries(shape.data).map(([key,value_],index)=>element('Row',{N:key,IX:index},[cell('Label',key),cell('Type',typeof value_==='number'?2:typeof value_==='boolean'?3:0),cell('Value',typeof value_==='object'?JSON.stringify(value_):String(value_))]))));
       if(shape.ports.length)node.children.push(element('Section',{N:'Connection'},shape.ports.map((port,index)=>element('Row',{N:port.id,IX:index},[cell('X',port.x*width/96),cell('Y',(1-port.y)*height/96),cell('DirX',0),cell('DirY',0),cell('Type',0)]))));
+      writeShapeExtensions(node,shape,page,numericIds,font=>fonts.get(font)??0,(code,message)=>exportDiagnostic(options,code,message),incoming,v=>visioColor(v,'#000000'));
       if(shape.children)node.children.push(element('Shapes',{},shape.children.map(child=>emit(child,height,childPre))));return node;
     };
     const sheet=element('PageSheet',{LineStyle:0,FillStyle:0,TextStyle:0},[cell('PageWidth',page.width/96),cell('PageHeight',page.height/96),cell('PageScale',1),cell('DrawingScale',1),element('Section',{N:'Layer'},page.layers.map((layer,index)=>element('Row',{IX:index},[cell('Name',layer.name),cell('Visible',layer.visible?1:0),cell('Lock',layer.locked?1:0),cell('Print',layer.printable?1:0)])))]);
-    const contents=element('PageContents',{xmlns:VISIO,'xmlns:r':RID},[element('Shapes',{},page.shapes.map(shape=>emit(shape,page.height))),element('Connects',{},connections)]);
-    return{metadata:element('Page',{ID:pageIndex,Name:page.name,NameU:page.name,ViewScale:1,ViewCenterX:page.width/192,ViewCenterY:page.height/192},[sheet,element('Rel',{'r:id':`rId${pageIndex+1}`})]),contents,part:`visio/pages/page${pageIndex+1}.xml`};
+    const contents=element('PageContents',{xmlns:VISIO,'xmlns:r':RID,'xmlns:dw':DW_NAMESPACE},[element('Shapes',{},page.shapes.map(shape=>emit(shape,page.height))),element('Connects',{},connections)]);
+    return{metadata:element('Page',{ID:pageIndex,Name:page.name,NameU:page.name,Background:page.isBackground?1:0,...(page.backgroundPageId?{BackPage:document.pages.findIndex(p=>p.id===page.backgroundPageId)}:{}),ViewScale:1,ViewCenterX:page.width/192,ViewCenterY:page.height/192},[sheet,element('Rel',{'r:id':`rId${pageIndex+1}`})]),contents,ids:numericIds,part:`visio/pages/page${pageIndex+1}.xml`};
   });}finally{engine.dispose();}
 }
 function inverseForExport(m:Matrix):Matrix{const determinant=m[0]*m[3]-m[1]*m[2];if(Math.abs(determinant)<1e-12)throw new DrawingError('SINGULAR_TRANSFORM','Cannot export a connector in a singular coordinate system.');return[m[3]/determinant,-m[1]/determinant,-m[2]/determinant,m[0]/determinant,(m[2]*m[5]-m[3]*m[4])/determinant,(m[1]*m[4]-m[0]*m[5])/determinant];}
+function engineShapes(page:Page):Shape[]{const shapes:Shape[]=[];const walk=(items:Shape[])=>{for(const shape of items){shapes.push(shape);shape.children&&walk(shape.children);}};walk(page.shapes);return shapes;}
 function defaultDocumentRoot():XmlElement{return element('VisioDocument',{xmlns:VISIO,'xmlns:r':RID},[element('DocumentSettings',{TopPage:0,DefaultTextStyle:0,DefaultLineStyle:0,DefaultFillStyle:0,DefaultGuideStyle:0}),element('Colors',{},[element('ColorEntry',{IX:0,RGB:'#000000'}),element('ColorEntry',{IX:1,RGB:'#ffffff'})]),element('FaceNames',{},[element('FaceName',{ID:0,NameU:'Arial',UnicodeRanges:'-1 -1 -1 -1',CharSets:'0 0',Panose:'2 11 6 4 2 2 2 2 2 4',Flags:325})]),element('StyleSheets',{},[element('StyleSheet',{ID:0,NameU:'No Style',Name:'No Style'},[cell('LineWeight',0.01),cell('LineColor','#000000'),cell('LinePattern',1),cell('FillForegnd','#ffffff'),cell('FillPattern',1)])]),element('DocumentSheet',{NameU:'TheDoc',Name:'TheDoc',LineStyle:0,FillStyle:0,TextStyle:0})]);}
 function rels(items:{id:string;type:string;target:string}[]):XmlElement{return element('Relationships',{xmlns:REL},items.map(r=>element('Relationship',{Id:r.id,Type:r.type,Target:r.target})));}
 /** Produces a fresh OPC/VSDX drawing. Unsupported imported features must not use this path implicitly. */
 export async function writeVsdx(document:DiagramDocument,options:VisioExportOptions={}):Promise<Uint8Array>{
-  validateDocument(document);const pages=buildExportPages(document,options),entries=new Map<string,Uint8Array>();const put=(path:string,node:XmlElement)=>entries.set(path,enc.encode(serializeXml(node)));
-  put('[Content_Types].xml',element('Types',{xmlns:CT},[element('Default',{Extension:'rels',ContentType:'application/vnd.openxmlformats-package.relationships+xml'}),element('Default',{Extension:'xml',ContentType:'application/xml'}),element('Override',{PartName:'/visio/document.xml',ContentType:'application/vnd.ms-visio.drawing.main+xml'}),element('Override',{PartName:'/visio/pages/pages.xml',ContentType:'application/vnd.ms-visio.pages+xml'}),...pages.map(page=>element('Override',{PartName:'/'+page.part,ContentType:'application/vnd.ms-visio.page+xml'})),element('Override',{PartName:'/docProps/core.xml',ContentType:'application/vnd.openxmlformats-package.core-properties+xml'}),element('Override',{PartName:'/docProps/app.xml',ContentType:'application/vnd.openxmlformats-officedocument.extended-properties+xml'})]));
+  validateDocument(document);const fonts=documentFonts(document),pages=buildExportPages(document,options,fonts),entries=new Map<string,Uint8Array>();const put=(path:string,node:XmlElement)=>entries.set(path,enc.encode(serializeXml(node)));
+  put('[Content_Types].xml',element('Types',{xmlns:CT},[element('Default',{Extension:'rels',ContentType:'application/vnd.openxmlformats-package.relationships+xml'}),element('Default',{Extension:'xml',ContentType:'application/xml'}),...['png','jpeg','gif','webp'].map(extension=>element('Default',{Extension:extension,ContentType:'image/'+extension})),element('Override',{PartName:'/visio/document.xml',ContentType:'application/vnd.ms-visio.drawing.main+xml'}),element('Override',{PartName:'/visio/pages/pages.xml',ContentType:'application/vnd.ms-visio.pages+xml'}),...pages.map(page=>element('Override',{PartName:'/'+page.part,ContentType:'application/vnd.ms-visio.page+xml'})),element('Override',{PartName:'/docProps/core.xml',ContentType:'application/vnd.openxmlformats-package.core-properties+xml'}),element('Override',{PartName:'/docProps/app.xml',ContentType:'application/vnd.openxmlformats-officedocument.extended-properties+xml'})]));
   put('_rels/.rels',rels([{id:'rId1',type:VREL+'document',target:'visio/document.xml'},{id:'rId2',type:'http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties',target:'docProps/core.xml'},{id:'rId3',type:RID+'/extended-properties',target:'docProps/app.xml'}]));
-  put('visio/document.xml',defaultDocumentRoot());put('visio/_rels/document.xml.rels',rels([{id:'rId1',type:VREL+'pages',target:'pages/pages.xml'}]));
+  const root=defaultDocumentRoot(),faces=first(root,'FaceNames')!;faces.children=[...fonts].map(([name,index])=>element('FaceName',{ID:index,NameU:name}));
+  const comments=writeComments(document,page=>pages[document.pages.indexOf(page)]!.ids,(code,message)=>exportDiagnostic(options,code,message));if(comments){comments.attributes['xmlns']=VISIO;put('visio/comments.xml',comments);const types=readPart(entries,'[Content_Types].xml');types.children.push(element('Override',{PartName:'/visio/comments.xml',ContentType:'application/vnd.ms-visio.comments+xml'}));put('[Content_Types].xml',types);}
+  put('visio/document.xml',root);const documentRelationships=[{id:'rId1',type:VREL+'pages',target:'pages/pages.xml'}];if(comments)documentRelationships.push({id:'rId2',type:VREL+'comments',target:'comments.xml'});
+  if(document.recordsets?.length){const records=writeRecordsets(document,page=>pages[document.pages.indexOf(page)]!.ids,(code,message)=>exportDiagnostic(options,code,message));put('visio/data/recordsets.xml',records.root);put('visio/data/_rels/recordsets.xml.rels',rels(records.snapshots.map((_,i)=>({id:`rId${i+1}`,type:VREL+'recordset',target:`recordset${i+1}.xml`}))));records.snapshots.forEach((xml,i)=>entries.set(`visio/data/recordset${i+1}.xml`,enc.encode(xml)));documentRelationships.push({id:'rId3',type:VREL+'recordsets',target:'data/recordsets.xml'});const types=readPart(entries,'[Content_Types].xml');types.children.push(element('Override',{PartName:'/visio/data/recordsets.xml',ContentType:'application/vnd.ms-visio.recordsets+xml'}),...records.snapshots.map((_,i)=>element('Override',{PartName:`/visio/data/recordset${i+1}.xml`,ContentType:'application/vnd.ms-visio.recordset+xml'})));put('[Content_Types].xml',types);}
+  put('visio/_rels/document.xml.rels',rels(documentRelationships));
   put('visio/pages/pages.xml',element('Pages',{xmlns:VISIO,'xmlns:r':RID},pages.map(page=>page.metadata)));put('visio/pages/_rels/pages.xml.rels',rels(pages.map((page,index)=>({id:`rId${index+1}`,type:VREL+'page',target:page.part.split('/').at(-1)!}))));for(const page of pages)put(page.part,page.contents);
+  const packageImages=(page:Page,info:ReturnType<typeof buildExportPages>[number],prefix:string)=>{
+    const links:{id:string;type:string;target:string}[]=[],nodes=descendants(info.contents,'Shape');
+    for(const shape of engineShapes(page)){
+      if(!shape.image)continue;
+      const match=shape.image.source.match(/^data:image\/(png|jpeg|webp|gif);base64,(.+)$/s)!,extension=match[1]!;
+      if(extension==='webp')exportDiagnostic(options,'IMAGE_WEBP','WebP bytes are preserved, but desktop Visio may not render WebP. Convert to PNG for interchange.');
+      const name=`${prefix}-${info.ids.get(shape.id)}.${extension}`,binary=atob(match[2]!);
+      entries.set(`visio/media/${name}`,Uint8Array.from(binary,c=>c.charCodeAt(0)));
+      const node=nodes.find(n=>n.attributes['ID']===String(info.ids.get(shape.id)))!;node.attributes['Type']='Foreign';
+      const id=`rId${links.length+1}`;
+      node.children.push(element('ForeignData',{ForeignType:'Bitmap',CompressionType:extension==='jpeg'?'JPEG':extension.toUpperCase()},[element('Rel',{'r:id':id})]));
+      links.push({id,type:RID+'/image',target:'../media/'+name});
+    }
+    if(links.length){put(info.part,info.contents);put(relationshipPart(info.part),rels(links));}
+  };
+  document.pages.forEach((page,i)=>packageImages(page,pages[i]!,`image-${i}`));
+  if(document.dataGraphics?.length)exportDiagnostic(options,'DATA_GRAPHICS_MODEL_ONLY','Data-graphic rules are native DrawingWeb model features. This Visio profile exports base shapes, not Visio data-graphic masters. Use SVG/PNG for the evaluated visual representation.');
+  if(document.theme)exportDiagnostic(options,'THEME_FLATTENED','DrawingWeb theme tokens are exported as resolved shape colors and fonts, not a native Visio quick-style theme.');
+  if(document.pages.some(p=>p.guides?.x.length||p.guides?.y.length))exportDiagnostic(options,'GUIDES_MODEL_ONLY','Workspace guides are not emitted as native Visio guide shapes.');
   put('docProps/core.xml',element('cp:coreProperties',{'xmlns:cp':'http://schemas.openxmlformats.org/package/2006/metadata/core-properties','xmlns:dc':'http://purl.org/dc/elements/1.1/'},[element('dc:title',{},[document.title]),element('dc:creator',{},['DrawingWeb'])]));put('docProps/app.xml',element('Properties',{xmlns:'http://schemas.openxmlformats.org/officeDocument/2006/extended-properties'},[element('Application',{},['DrawingWeb']),element('AppVersion',{},['0.1'])]));
-  if(document.masters.length)exportDiagnostic(options,'MASTER_INSTANCES_EXPANDED','Placed master instances are exported as editable shapes; unplaced library definitions are not emitted in this profile.');
+  if(document.masters.length){
+    const masterMetadata:XmlElement[]=[],masterLinks:{id:string;type:string;target:string}[]=[],types=readPart(entries,'[Content_Types].xml');
+    for(const [i,master]of document.masters.entries()){
+      const definition=clone(master.shape);definition.masterId=undefined;definition.container=definition.container?{...definition.container,memberIds:[]}:undefined;definition.calloutTargetId=undefined;definition.dataLinks=undefined;definition.dataGraphicId=undefined;
+      const projected=createDocument(master.name);projected.pages=[createPage('Master',{shapes:[definition],width:Math.max(1,definition.width),height:Math.max(1,definition.height)})];const part=buildExportPages(projected,options,fonts)[0]!;part.contents.name='MasterContents';part.part=`visio/masters/master${i+1}.xml`;put(part.part,part.contents);packageImages(projected.pages[0]!,part,`master-${i+1}`);
+      masterMetadata.push(element('Master',{ID:i+1,Name:master.name,NameU:master.name},[element('Rel',{'r:id':`rId${i+1}`})]));masterLinks.push({id:`rId${i+1}`,type:VREL+'master',target:`master${i+1}.xml`});types.children.push(element('Override',{PartName:`/visio/masters/master${i+1}.xml`,ContentType:'application/vnd.ms-visio.master+xml'}));
+
+    }
+    put('visio/masters/masters.xml',element('Masters',{xmlns:VISIO,'xmlns:r':RID},masterMetadata));put('visio/masters/_rels/masters.xml.rels',rels(masterLinks));documentRelationships.push({id:'rId4',type:VREL+'masters',target:'masters/masters.xml'});put('visio/_rels/document.xml.rels',rels(documentRelationships));types.children.push(element('Override',{PartName:'/visio/masters/masters.xml',ContentType:'application/vnd.ms-visio.masters+xml'}));put('[Content_Types].xml',types);
+  }
   return writeZip(entries);
 }
 function vdxToModern(node:XmlElement):XmlElement{
@@ -304,28 +360,36 @@ function modernToVdxShape(node:XmlElement):XmlElement{
   }return result;
 }
 export function writeVdx(document:DiagramDocument,options:VisioExportOptions={}):string{
-  validateDocument(document);const pages=buildExportPages(document,options);if(pages.some(page=>descendants(page.contents,'Row').some(row=>row.attributes['T']==='RelCubBezTo')))exportDiagnostic(options,'VDX_CURVES_FLATTENED','VDX export uses 24-segment cubic flattening; use VSDX to retain cubic curve controls.');
+  validateDocument(document);
+  const extended=document.comments?.length||document.recordsets?.length||document.dataGraphics?.length||document.theme||document.masters.length||document.pages.some(page=>page.backgroundPageId||page.isBackground||page.guides||engineShapes(page).some(shape=>shape.richText||shape.container||shape.calloutTargetId||shape.hyperlinks?.length||shape.image||shape.dataLinks?.length));
+  if(extended)exportDiagnostic(options,'VDX_FEATURES_PROJECTED','The legacy VDX profile does not reconstruct all rich text, semantic structure, comments, linked records, pictures, themes, masters or background-page features. Use VSDX for the broader profile and JSON for the complete DrawingWeb model.');const pages=buildExportPages(document,options);if(pages.some(page=>descendants(page.contents,'Row').some(row=>row.attributes['T']==='RelCubBezTo')))exportDiagnostic(options,'VDX_CURVES_FLATTENED','VDX export uses 24-segment cubic flattening; use VSDX to retain cubic curve controls.');
   const root=element('VisioDocument',{xmlns:VDX,'xmlns:xlink':'http://www.w3.org/1999/xlink'},[element('DocumentProperties',{},[element('Title',{},[document.title]),element('Creator',{},['DrawingWeb'])]),element('DocumentSettings',{TopPage:0,DefaultTextStyle:0,DefaultLineStyle:0,DefaultFillStyle:0}),element('StyleSheets',{},[element('StyleSheet',{ID:0,NameU:'No Style',Name:'No Style'})]),element('Pages',{},pages.map(page=>{
     const sheet=first(page.metadata,'PageSheet')!,props=element('PageProps',{},elements(sheet,'Cell').map(c=>element(c.attributes['N']!,{},[c.attributes['V']??''])));
     return element('Page',{ID:page.metadata.attributes['ID']!,Name:page.metadata.attributes['Name']!,NameU:page.metadata.attributes['NameU']!},[props,element('Shapes',{},elements(first(page.contents,'Shapes')!,'Shape').map(modernToVdxShape)),clone(first(page.contents,'Connects')!)]);
   }))]);return serializeXml(root);
 }
-export function exportSvg(document:DiagramDocument,pageId=document.pages[0]!.id):string{
-  const engine=new DiagramEngine(document,{historyLimit:0}),page=engine.getPage(pageId);const output:string[]=[];const n=(v:number)=>+v.toFixed(5);
-  const arrow=(a:Point,b:Point,color:string,width:number)=>{const angle=Math.atan2(b.y-a.y,b.x-a.x),size=8+width*1.5,c=Math.cos(angle),s=Math.sin(angle);return `<path d="M ${n(b.x)} ${n(b.y)} L ${n(b.x-size*c+size*.45*s)} ${n(b.y-size*s-size*.45*c)} L ${n(b.x-size*c-size*.45*s)} ${n(b.y-size*s+size*.45*c)} Z" fill="${escapeXml(color)}"/>`;};
-  const visit=(shapes:Shape[],visible=true,parentOpacity=1)=>{for(const shape of shapes){const layer=page.layers.find(l=>l.id===shape.layerId),shown=visible&&shape.visible!==false&&layer?.visible!==false&&layer?.printable!==false;if(!shown)continue;const opacity=parentOpacity*shape.style.opacity;const ref=engine.getRef(shape.id)!;if(shape.kind==='connector'){
-    const points=connectorRoute(engine,shape).points,color=safeColor(shape.style.stroke,'#000000');output.push(`<g opacity="${opacity}"><polyline points="${points.map(p=>`${n(p.x)},${n(p.y)}`).join(' ')}" fill="none" stroke="${escapeXml(color)}" stroke-width="${shape.style.strokeWidth}"${shape.style.dash.length?` stroke-dasharray="${shape.style.dash.join(' ')}"`:''}/>`);if(points.length>1){if(shape.style.endArrow)output.push(arrow(points.at(-2)!,points.at(-1)!,color,shape.style.strokeWidth));if(shape.style.startArrow)output.push(arrow(points[1]!,points[0]!,color,shape.style.strokeWidth));}
-    if(shape.text&&points.length>1){const i=Math.floor((points.length-1)/2),a=points[i]!,b=points[i+1]!,x=(a.x+b.x)/2,y=(a.y+b.y)/2,style=shape.style;output.push(`<text x="${n(x)}" y="${n(y)}" text-anchor="middle" dominant-baseline="middle" fill="${escapeXml(safeColor(style.color,'#000000'))}" font-family="${escapeXml(style.fontFamily)}" font-size="${style.fontSize}" font-weight="${style.bold?'700':'400'}" font-style="${style.italic?'italic':'normal'}" paint-order="stroke" stroke="#ffffff" stroke-width="5" stroke-linejoin="round">${escapeXml(shape.text)}</text>`);}
-    output.push('</g>');
-  }else{
-    const style=shape.style;output.push(`<g transform="matrix(${ref.matrix.map(n).join(' ')})" opacity="${opacity}">`);const path=shapePath(shape);if(path)output.push(`<path d="${escapeXml(path)}" fill="${escapeXml(safeColor(style.fill,'none'))}" stroke="${escapeXml(safeColor(style.stroke,'#000000'))}" stroke-width="${style.strokeWidth}"${style.dash.length?` stroke-dasharray="${style.dash.join(' ')}"`:''}/>`);
-    if(shape.text){const lines=shape.text.split('\n'),x=style.align==='left'?10:style.align==='right'?shape.width-10:shape.width/2,y=shape.height/2-(lines.length-1)*style.fontSize*.65;output.push(`<text fill="${escapeXml(safeColor(style.color,'#000000'))}" font-family="${escapeXml(style.fontFamily)}" font-size="${style.fontSize}" font-weight="${style.bold?'700':'400'}" font-style="${style.italic?'italic':'normal'}" text-anchor="${style.align==='left'?'start':style.align==='right'?'end':'middle'}" dominant-baseline="middle">${lines.map((line,i)=>`<tspan x="${n(x)}" y="${n(y+i*style.fontSize*1.3)}">${escapeXml(line)}</tspan>`).join('')}</text>`);}output.push('</g>');
-  }if(shape.children)visit(shape.children,shown,opacity);}};
-  try{visit(page.shapes);return`<?xml version="1.0" encoding="UTF-8"?><svg xmlns="http://www.w3.org/2000/svg" width="${page.width}" height="${page.height}" viewBox="0 0 ${page.width} ${page.height}" role="img" aria-label="${escapeXml(page.name)}"><title>${escapeXml(document.title+' — '+page.name)}</title><rect width="100%" height="100%" fill="${escapeXml(safeColor(page.background,'#ffffff'))}"/>${output.join('')}</svg>`;}finally{engine.dispose();}
-}
+export { exportSvg } from './svg.js';
+export type { SvgExportOptions } from './svg.js';
 export async function readDrawing(input:Uint8Array|string,name=''):Promise<DrawingReadResult>{
   if(typeof input==='string'){if(input.trimStart().startsWith('<'))return readVdx(input);return{document:parseDocument(input),diagnostics:[]};}
   if(input[0]===0xd0&&input[1]===0xcf)throw new DrawingError('LEGACY_VSD_UNSUPPORTED','Binary VSD is not an XML/OPC drawing. Convert it using a trusted VSD-capable application before importing.');
   if(input[0]===0x50&&input[1]===0x4b){const source=await readVsdx(input);return{document:source.document,diagnostics:[...source.diagnostics],source};}
   if(/\.vsd$/i.test(name))throw new DrawingError('LEGACY_VSD_UNSUPPORTED','Binary VSD is not supported by this decoder.');return readDrawing(dec.decode(input),name);
+}
+
+export interface VisioWriteOptions extends VisioExportOptions { kind?: 'drawing'|'template'|'stencil' }
+/** Writes the explicitly supported drawing/template/stencil profile. Source-preserving save is separate. */
+export async function writeVisio(document:DiagramDocument,options:VisioWriteOptions={}):Promise<Uint8Array> {
+  const kind=options.kind??'drawing';if(!['drawing','template','stencil'].includes(kind))throw new DrawingError('VISIO_KIND','Unknown Visio package family.');
+  if(kind==='drawing')return writeVsdx(document,options);
+  let model=document;
+  if(kind==='stencil'){if(!document.masters.length)throw new DrawingError('STENCIL_EMPTY','Register at least one master before exporting a stencil library.');model={...clone(document),pages:[createPage('Stencil')],comments:[],recordsets:[],dataGraphics:[]};}
+  const entries=await readZip(await writeVsdx(model,options)),types=readPart(entries,'[Content_Types].xml');
+  for(const entry of elements(types,'Override'))if(entry.attributes['PartName']==='/visio/document.xml')entry.attributes['ContentType']=`application/vnd.ms-visio.${kind}.main+xml`;
+  if(kind==='stencil'){
+    for(const name of [...entries.keys()])if(name.startsWith('visio/pages/'))entries.delete(name);
+    types.children=types.children.filter(node=>!isElement(node)||!node.attributes['PartName']?.startsWith('/visio/pages/'));
+    const rels=readPart(entries,'visio/_rels/document.xml.rels');rels.children=rels.children.filter(node=>!isElement(node)||node.attributes['Type']!==VREL+'pages');entries.set('visio/_rels/document.xml.rels',enc.encode(serializeXml(rels)));
+  }
+  entries.set('[Content_Types].xml',enc.encode(serializeXml(types)));return writeZip(entries);
 }

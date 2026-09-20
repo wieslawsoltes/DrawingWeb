@@ -1,8 +1,8 @@
 # DrawingWeb
 
-A reusable, data-bound diagram engine, an accessible browser drawing control, and a self-contained Blazor component library. The compact studio is an actual consumer of the engine: canvas edits, property edits, table edits and undo all operate on the same model.
+A reusable, data-bound diagram engine, an accessible browser drawing control, and a self-contained Blazor component library. The ribbon-based studio is an actual consumer of the engine: canvas edits, property edits, table edits and undo all operate on the same model.
 
-**Version:** `0.1.0-alpha.1` · **License:** MIT · **JavaScript runtime dependencies:** none.
+**Version:** `0.1.0-alpha.2` · **License:** MIT · **JavaScript runtime dependencies:** none.
 
 - [Studio / GitHub Pages](https://wieslawsoltes.github.io/DrawingWeb/)
 - [Blazor WebAssembly sample](https://wieslawsoltes.github.io/DrawingWeb/blazor/)
@@ -12,7 +12,7 @@ A reusable, data-bound diagram engine, an accessible browser drawing control, an
 
 ## Compatibility is a contract, not a marketing claim
 
-DrawingWeb implements documented **VSDX and VDX interchange profiles** and a preservation-first VSDX editing contract. It is **not fully Microsoft Visio compatible**. Binary VSD, the complete ShapeSheet language, complete Visio text/theme/geometry fidelity, native ODBC/OLE DB execution, all stencils/containers/data graphics and macro execution are not implemented. No desktop Microsoft Visio visual-fidelity certification has been performed.
+DrawingWeb implements documented **VSDX and VDX interchange profiles** and a preservation-first VSDX editing contract. It is **not fully Microsoft Visio compatible**. Binary VSD, the complete ShapeSheet language, complete Visio text/theme/geometry fidelity, native ODBC/OLE DB execution, complete stencil inheritance, native data-graphic masters and macro execution are not implemented. No desktop Microsoft Visio visual-fidelity certification has been performed.
 
 An unchanged imported VSDX is returned byte-for-byte. Supported scalar edits patch selected XML cells while preserving unrelated package parts. Unsupported edits are rejected in preservation mode rather than silently destroying source content. A separate, explicitly labeled rebuild mode writes only supported DrawingWeb content. See [the compatibility matrix](docs/COMPATIBILITY.md).
 
@@ -24,7 +24,8 @@ The package follows the ESM / CommonJS / TypeScript declaration / browser-global
 | --- | --- |
 | `@wieslawsoltes/drawingweb/core` | Immutable documents, validated transactions, history, selection, grouping, masters |
 | `/geometry`, `/layout` | Affine geometry, spatial indexing, connector routing, graph layout |
-| `/formula` | Sandboxed formula parser and dependency invalidation; not a complete ShapeSheet runtime |
+| `/formula`, `/shapesheet` | Sandboxed expressions and opt-in transactional cell dependencies/projection |
+| `/features`, `/text` | Containers/lists/swimlanes, callouts, comments, themes, recordsets and shared rich-text layout/editing |
 | `/data` | Typed observable tables, two-way binding, REST/ETag transport, CSV, IndexedDB CAS |
 | `/io` | OPC/ZIP/XML, VSDX preservation, VDX and vector SVG export |
 | `/web` | Retained Canvas 2D renderer, drawing control, custom element registration |
@@ -37,7 +38,7 @@ The modules are independently importable **subpaths of one versioned npm package
 ## JavaScript / TypeScript
 
 ```sh
-npm install @wieslawsoltes/drawingweb@0.1.0-alpha.1
+npm install @wieslawsoltes/drawingweb@0.1.0-alpha.2
 ```
 
 ```ts
@@ -78,7 +79,7 @@ The host must have a measurable height, for example `height: 600px`. Call `regis
 ## Blazor
 
 ```sh
-dotnet add package DrawingWeb.Blazor --version 0.1.0-alpha.1
+dotnet add package DrawingWeb.Blazor --version 0.1.0-alpha.2
 ```
 
 ```razor
@@ -107,6 +108,10 @@ dotnet add package DrawingWeb.Blazor --version 0.1.0-alpha.1
 Application interop payloads use explicit JSON contracts rather than reflection over anonymous types. The published WebAssembly consumer is tested with assembly trimming enabled. Initialization errors are reported once per control instance; remove and recreate the control to retry initialization.
 
 ## What the editor does
+
+The workspace has File/Backstage, eight ribbon tabs, command search, a Shapes/templates/masters pane, zoom-aware rulers, page tabs, external data, and Format/Layers/Review/ShapeSheet task panes. Commands act on the same transactional model rather than a UI-only mockup.
+
+New semantics include independent container/list membership, auto-fitting and membership locks; horizontal/vertical swimlane pools; attached callouts; comment replies/resolution; hyperlinks; rich-text runs/paragraphs and in-place formatting; original theme tokens; conditional data graphics; keyed recordsets with exact auto-link and explicit refresh; background pages; embedded raster pictures; and VSSX/VSTX package profiles. `/shapesheet` provides opt-in unit-aware cell evaluation and dependency projection, not the full Visio constraint language. See [the detailed functionality/parity review](docs/VISIO_PARITY_REVIEW.md).
 
 Multi-page documents; 11 original stencils; arbitrary vector paths; affine groups; selection/marquee; drag, resize and rotate; attached connectors; obstacle-aware routing; freehand simplification; text editing; layers; z-order; alignment; duplicate/copy/paste; deterministic undo/redo; pan/zoom; keyboard navigation; SVG/PNG export; validated import; property inspector; editable external-data table; CSV; local compare-and-swap persistence. The renderer caches paths/display items and spatially culls the viewport. It is Canvas 2D, **not WebGPU**, and no million-entity frame-time claim is made.
 
@@ -139,6 +144,6 @@ Build JS before packing the RCL. Both .NET 8 and .NET 10 SDK/runtime families ar
 
 ## Release qualification and documentation
 
-[Architecture](docs/ARCHITECTURE.md) · [Visio compatibility](docs/COMPATIBILITY.md) · [Data adapters](docs/DATA.md) · [Security](docs/SECURITY.md) · [Publishing](docs/PUBLISHING.md) · [Changelog](CHANGELOG.md).
+[Parity review](docs/VISIO_PARITY_REVIEW.md) · [Architecture](docs/ARCHITECTURE.md) · [Visio compatibility](docs/COMPATIBILITY.md) · [Data adapters](docs/DATA.md) · [Security](docs/SECURITY.md) · [Publishing](docs/PUBLISHING.md) · [Changelog](CHANGELOG.md).
 
 Publishing is gated by native tests, browser tests, clean npm-consumer checks, .NET builds, packed-NuGet consumer builds, and Server/WASM browser checks. The integration tests include actual EditForm edits and an intentionally failing native initialization to verify bounded error reporting and disposal. `NPM_TOKEN` and `NUGET_API_KEY` are used only in the publishing jobs. Registry links above identify package destinations; a workflow file alone is not evidence of successful publication. Consult the release run and registry version for the actual status.
