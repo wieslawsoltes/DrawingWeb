@@ -74,3 +74,13 @@ Normalized JSON is the full-fidelity format for DrawingWeb's own model. Rebuildi
 One npm version exposes ESM, CommonJS, declarations, public subpaths and a generated browser-global registry. The same compiled ESM assets are copied into the Razor class library before packing. NuGet consumers receive local static web assets at `_content/DrawingWeb.Blazor/engine/`. Build and packing fail when these assets are absent. JS and NuGet versions must match.
 
 The studio and package-restored Server/WASM samples are integration consumers, not alternate rendering engines. The source package contains no vendored font files or Microsoft stencils.
+
+## Semantic operations and shared presentation
+
+`features.ts` hosts `DiagramOperations`, separate from browser construction. Container membership is a graph distinct from affine visual parentage. Core operation closure, grouping, duplication and removal preserve this graph; automatic fitting executes within the outer transaction. `text.ts` owns formatted runs, bounded shared line layout and an optional browser editing session. `svg.ts` consumes the same presentation semantics as Canvas, including derived data graphics; no renderer-specific scene model is authoritative.
+
+`shapesheet.ts` registers a synchronous engine derivation. It evaluates enrolled cells through a bounded dependency graph, detects cycles, and projects supported geometry before validation/history publication. Replacing a document clears the enrollment set. Unsupported expressions stay cached rather than executing arbitrary host code.
+
+`visio-shapes.ts` isolates native text/structure/link/comment projection; `visio-data.ts` isolates ADO snapshots and recordset identities. These codecs never open database connections or evaluate executable document actions. VSDX source preservation and supported-subset reconstruction remain explicitly different contracts. The review matrix documents representations not reconstructed natively.
+
+The sample `workspace.js` supplies ribbon/task-pane commands as a consumer of these public APIs. The Blazor partial feature API uses explicit source-generated JSON contracts over the same bounded native command dispatcher, preserving trimming and keeping browser stream references on framework converters.

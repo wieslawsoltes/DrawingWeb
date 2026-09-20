@@ -20,11 +20,11 @@ function tokenize(input:string):Token[]{
 export class Formula {
   private readonly ast:Ast;
   readonly dependencies:ReadonlySet<string>;
-  constructor(public readonly source:string){
+  constructor(public readonly source:string,options:{lengthScale?:number}={}){
     const tokens=tokenize(source.startsWith('=')?source.slice(1):source);let index=0,depth=0;const refs=new Set<string>();
     const peek=()=>tokens[index]!,take=()=>tokens[index++]!;
     const expression=(min=0):Ast=>{if(++depth>128)throw new DrawingError('FORMULA_DEPTH','Formula nesting is too deep.');let node:Ast;const token=take();
-      if(token.type==='number'){let value=Number(token.text);if(peek().type==='name'&&units[peek().text.toLowerCase()]!==undefined)value*=units[take().text.toLowerCase()]!;node={type:'literal',value};}
+      if(token.type==='number'){let value=Number(token.text);if(peek().type==='name'&&units[peek().text.toLowerCase()]!==undefined){const unit=take().text.toLowerCase();value*=units[unit]!*(unit==='deg'||unit==='rad'?1:options.lengthScale??1);};node={type:'literal',value};}
       else if(token.type==='string')node={type:'literal',value:token.text};
       else if(token.text==='+'||token.text==='-')node={type:'unary',op:token.text,value:expression(5)};
       else if(token.text==='('){node=expression();if(take().text!==')')throw new DrawingError('FORMULA_SYNTAX','Expected closing parenthesis.');}
@@ -50,6 +50,7 @@ export class Formula {
         case 'binary':{const a=run(node.left),b=run(node.right);switch(node.op){case '+':return num(a)+num(b);case '-':return num(a)-num(b);case '*':return num(a)*num(b);case '/':if(num(b)===0)throw new DrawingError('FORMULA_DIV0','Division by zero.');return num(a)/num(b);case '%':if(num(b)===0)throw new DrawingError('FORMULA_DIV0','Modulo by zero.');return num(a)%num(b);case '^':return num(a)**num(b);case '&':return String(a)+String(b);case '=':case '==':return a===b;case '<>':case '!=':return a!==b;case '<':return a<b;case '>':return a>b;case '<=':return a<=b;case '>=':return a>=b;}throw new DrawingError('FORMULA_OPERATOR',node.op);}
         case 'call':{
           const args=node.args,need=(min:number,max=min)=>{if(args.length<min||args.length>max)throw new DrawingError('FORMULA_ARITY',`${node.name} requires ${min}${min!==max?`..${max}`:''} arguments.`);};
+          if(node.name==='IFERROR'){need(2);try{return run(args[0]!);}catch(error){if(error instanceof DrawingError)return run(args[1]!);throw error;}}
           if(node.name==='IF'){need(3);return run(args[run(args[0]!)?1:2]!);}
           if(node.name==='AND'){need(1,256);return args.every(arg=>Boolean(run(arg)));}
           if(node.name==='OR'){need(1,256);return args.some(arg=>Boolean(run(arg)));}
@@ -58,6 +59,19 @@ export class Formula {
           if(node.name==='CONCAT'||node.name==='CONCATENATE'){need(1,256);return args.map(arg=>String(run(arg))).join('');}
           if(node.name==='LEN'){need(1);return String(run(args[0]!)).length;}
           if(node.name==='RGB'){need(3);return '#'+args.map(arg=>Math.max(0,Math.min(255,Math.round(num(run(arg))))).toString(16).padStart(2,'0')).join('');}
+          if(['LOWER','UPPER','TRIM','LEFT','RIGHT','MID','FIND','SUBSTITUTE','STRSAME'].includes(node.name)){
+            const a=String(run(args[0]??{type:'literal',value:''}));
+            switch(node.name){case 'LOWER':need(1);return a.toLowerCase();case 'UPPER':need(1);return a.toUpperCase();case 'TRIM':need(1);return a.trim().replace(/\s+/g,' ');
+              case 'LEFT':case 'RIGHT':{need(2);const count=Math.max(0,Math.trunc(num(run(args[1]!))));return node.name==='LEFT'?a.slice(0,count):count?a.slice(-count):'';}
+              case 'MID':{need(3);const start=Math.max(0,Math.trunc(num(run(args[1]!)))-1),count=Math.max(0,Math.trunc(num(run(args[2]!))));return a.slice(start,start+count);}
+              case 'FIND':{need(2,3);const index=String(run(args[1]!)).indexOf(a,args[2]?Math.max(0,num(run(args[2]))-1):0);if(index<0)throw new DrawingError('FORMULA_VALUE','Substring not found.');return index+1;}
+              case 'SUBSTITUTE':{need(3);const find=String(run(args[1]!)),replace=String(run(args[2]!));if(!find)return a;const result=a.split(find).join(replace);if(result.length>1_000_000)throw new DrawingError('FORMULA_LIMIT','String result exceeds one million characters.');return result;}
+              case 'STRSAME':need(2);return a===String(run(args[1]!));
+            }
+          }
+          const extra:Record<string,(...v:number[])=>number>={ACOS:Math.acos,ASIN:Math.asin,ATAN:Math.atan,EXP:Math.exp,LN:Math.log,LOG10:Math.log10,INT:Math.floor,SIGN:Math.sign};
+          if(extra[node.name]){need(1);return extra[node.name]!(num(run(args[0]!)));}
+          if(node.name==='MOD'){need(2);const a=num(run(args[0]!)),b=num(run(args[1]!));if(!b)throw new DrawingError('FORMULA_DIV0','Modulo by zero.');return a-b*Math.floor(a/b);}
           const f:Record<string,{min:number;max?:number;fn:(...values:number[])=>number}>={ABS:{min:1,fn:Math.abs},SQRT:{min:1,fn:Math.sqrt},SIN:{min:1,fn:Math.sin},COS:{min:1,fn:Math.cos},TAN:{min:1,fn:Math.tan},ATAN2:{min:2,fn:Math.atan2},FLOOR:{min:1,fn:Math.floor},CEILING:{min:1,fn:Math.ceil},ROUND:{min:1,max:2,fn:(n,d=0)=>Math.round(n*10**d)/10**d},MIN:{min:1,max:256,fn:Math.min},MAX:{min:1,max:256,fn:Math.max},SUM:{min:1,max:256,fn:(...v)=>v.reduce((a,b)=>a+b,0)}};
           const function_=f[node.name];if(!function_)throw new DrawingError('FORMULA_FUNCTION',`Unsupported function: ${node.name}`);need(function_.min,function_.max??function_.min);return function_.fn(...args.map(arg=>num(run(arg))));
         }

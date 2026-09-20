@@ -79,3 +79,13 @@ An initialization failure is terminal for that control instance and is reported 
 Both published-host test suites include a deliberately failing sample module. They check one failure notification, no repeated creation during parent renders, no false `Ready`, safe removal and continued operation of the healthy editor.
 
 Physical touch devices, screen readers, disconnection/reconnection policies, production CSP and application-specific database providers still need deployment qualification. The package is not a full Microsoft Visio implementation; its format boundary is in [COMPATIBILITY.md](../docs/COMPATIBILITY.md).
+
+## Typed semantic and ShapeSheet API
+
+The library also supplies trim-safe feature models for containers, rich text, comments, hyperlinks, recordsets/links, data graphics, themes and guides. They are part of `DrawingDocument`/`DrawingShape`, including extension-data preservation.
+
+After `Ready`, the `DrawingEditor` partial API exposes `CreateContainerAsync`, `SetContainerMembersAsync`, `LockContainerAsync`, `FitContainerAsync`, `DisbandContainerAsync`, `CreateSwimlanesAsync`, `ReorderLaneAsync`, `CreateCalloutAsync`, `AddHyperlinkAsync`, `AddCommentAsync`, `ReplyCommentAsync`, `ResolveCommentAsync`, `SetRichTextAsync`, `ApplyThemeAsync`, `RegisterDataGraphicAsync`, `ApplyDataGraphicAsync`, `UpsertRecordsetAsync`, `LinkDataAsync`, `RefreshDataAsync`, `AutoLinkAsync`, `SetCellAsync`, `ActivateShapeSheetAsync`, `DeactivateShapeSheetAsync`, `GetCellsAsync`, `DuplicatePageAsync`, `RegisterMasterAsync` and `InsertMasterAsync`. `ExportAsync` additionally accepts `vstx` and `vssx`; a stencil export requires at least one master.
+
+`SetCellAsync` takes a `JsonElement` cached/literal value and an optional formula. Length results use Visio inches (96 drawing pixels per inch). Enrollment persists until deactivation or document replacement; it is not equivalent to a complete native constraint system. `GetCellsAsync` can return cached values with diagnostics for unsupported formulas.
+
+Public feature payloads are serialized through the generated model contract, not reflection or anonymous-type preservation. The shared release-mode Server/WASM exercise creates rich content, a container/callout/comment/link, evaluates a Width cell, refreshes a keyed recordset and exports a stencil. See the current Actions run for qualification results. Feature availability does not change the Visio preservation/rebuild boundary.

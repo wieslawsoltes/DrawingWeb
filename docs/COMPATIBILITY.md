@@ -8,20 +8,22 @@
 | VSDX OPC | ZIP entries, relationship traversal, pages, masters, shape trees, common cells | Some package features remain opaque rather than interpreted |
 | VSDX preservation | Original no-op bytes; unrelated entry payload preservation; supported scalar cell patches | Edited ZIP container and changed XML formatting need not remain byte-identical |
 | VSDX geometry | Common move/line/relative cubic/quadratic/ellipse/arc paths and cached coordinates | Unsupported geometry rows are reported/approximated; not every NURBS/spline formula is evaluated |
-| Groups and masters | Nested affine groups, basic inherited master cells/children | Not complete Visio inheritance, stencil authoring or live master synchronization |
-| Text | Plain text, basic character/style cells, approximate browser rendering | Mixed runs, fields, full paragraph/character formatting, vertical/bidi/complex text fidelity incomplete |
-| Styles and themes | Common cached colors/width/opacity/font-size/style flags | Full theme/quick-style resolution is not implemented; normalized export may substitute fonts/colors |
+| Groups, masters and containers | Affine groups, master insertion, independent container/list membership, swimlane pools and callouts | Native structure roles 1–6 and cached geometry are projected; full inheritance/add-on behavior is not implemented |
+| Text | Rich runs, basic paragraphs/bullets, text blocks, cached fields and styled editing | Character/Paragraph/Field projection is a subset; full fields, typography, bidi and vertical fidelity remain incomplete |
+| Styles and themes | Cached styles, original theme palettes and token bindings | Full theme/quick-style resolution is not implemented; export materializes styles and reports flattening |
 | Layers | Visibility, lock, printability and basic layer references | Full Visio layer behavior and all UI controls are not implemented |
 | Connectors | Shape references, endpoint coordinates, automatic routes, normalized ports | All Visio glue semantics, connection-point formulas and port identity are not round-tripped exactly |
-| Shape data | Shape property rows and normalized JSON data | Full linked recordset/schema/data-graphics reconstruction is not implemented |
+| Shape data | Properties, keyed recordsets, ADO XML snapshots, native RowMaps, explicit refresh and rendered data graphics | Composite keys/provider schemas and native data-graphic masters are incomplete; text/geometry mapping projection is diagnosed |
 | Database access | Two-way observable tables, REST revisions, server ADO.NET adapter | Browser does not run Visio ODBC/OLE DB strings; external database files are not opened implicitly |
-| Formulas | Bounded expression engine; original cell formulas retained | Not a complete ShapeSheet runtime or automatic universal recalculation |
+| Formulas | Bounded expression engine, opt-in dependency projection, cross-shape/page cells and unit conversion | Not the full ShapeSheet language/constraint system; unsupported imported formulas retain caches |
 | VDX | Basic XML import/export | Export approximates cubic curves as 24-segment polylines and emits diagnostics |
 | VSD | Explicit unsupported-format error | Binary OLE VSD decoding not implemented |
-| VSSX/VSTX and stencil-only packages | Some shared structures can be retained in a source package | Dedicated stencil/template authoring and stencil-only opening are not implemented |
+| VSSX/VSTX and stencil-only packages | Dedicated template/stencil writers, unplaced masters and media, stencil-only opening | Supported package profiles, not universal stencil/template inheritance or desktop certification |
 | Macros / signatures | Macro detection/rejection by default; explicit preservation opt-in | No macro execution; signed-package editing is rejected rather than silently invalidating signatures |
-| Embedded objects / foreign data | Original package entries can be preserved | Not a universal image/OLE/media renderer |
-| SVG / PNG | Original DrawingWeb geometry and plain text | SVG and Canvas text layout can differ; not a raster capture of Microsoft Visio |
+| Embedded objects / foreign data | Embedded PNG/JPEG/GIF/WebP, page/master media and opaque-part preservation | WebP export is diagnosed; no general EMF/WMF/TIFF/OLE/media renderer |
+| SVG / PNG | Rich text, backgrounds, containers, callouts, raster images and data graphics | Shared layout with potentially different text measurement; not a raster capture of Visio |
+| Comments / hyperlinks | Normalized replies/resolution and safe links; classic comment/author parts and hyperlink rows | Modern native threads, relative/internal destination equivalence and anchor geometry remain limited |
+| Rulers / guides | Unit-aware rulers and visible page guides | Guides are not a complete native snapping/glue subsystem and are diagnosed on rebuild |
 
 ## Preservation mode
 
@@ -36,13 +38,15 @@ const output = await source.save(engine.document);
 
 The source object holds the import baseline and all package parts. No-op saves return the original input exactly. Supported changes include certain position/rotation, plain-text, scalar style, shape property and page-name edits. The implementation checks changed fields, not just the intended command label. A fill edit does not rewrite an unrelated font reference.
 
-Adding/removing/reparenting shapes, changing page topology, resizing/changing path geometry, changing layer/master definitions, mixed-rich-text rewrites, unsupported connector-transform edits, unsupported property removal and signed-package edits are rejected by the preservation guard. The exact executable contract is in `VisioPackage.save` and its tests; applications should handle the error code rather than assume every edit is supported.
+Adding/removing/reparenting shapes, changing page topology, resizing/changing path geometry, changing layer/master definitions, mixed-rich-text rewrites, new semantic/data/comment/image/theme edits, unsupported connector-transform edits, unsupported property removal and signed-package edits are rejected by the preservation guard. The exact executable contract is in `VisioPackage.save` and its tests; applications should handle the error code rather than assume every edit is supported.
 
 ## Rebuild mode
 
-`writeVsdx(document)` builds a new supported-subset OPC package. In the studio, this is a separate export choice with a confirmation. It is deliberately not an automatic fallback when preservation fails. Retained unknown source parts, native database definitions, complex formulas, theme information and rich content may be absent or normalized in a rebuilt file.
+`writeVsdx(document)` builds a new supported-subset OPC package. In the studio, this is a separate export choice with a confirmation. It is deliberately not an automatic fallback when preservation fails. Retained unknown source parts, native database definitions, complex formulas, theme information and unsupported rich content may be absent or normalized in a rebuilt file.
 
 Imported cached geometry is often useful even when its generating formula is not supported. That does not mean subsequent edits preserve the original constraint system. Treat diagnostics as part of conversion results. Do not suppress warnings in an unattended business-document pipeline.
+
+See [the detailed parity review](VISIO_PARITY_REVIEW.md) for feature-level contracts, limitations and interacting-edit invariants.
 
 ## Qualification still needed
 

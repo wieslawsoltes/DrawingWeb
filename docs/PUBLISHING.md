@@ -4,7 +4,7 @@ The npm and NuGet versions are aligned at `0.1.0-alpha.1`. The root manifest def
 
 ## Validation gates
 
-The release workflow runs on main pushes, pull requests and manual dispatch. Only trusted main runs can publish. It performs Node/format tests, real Chromium tests, an offline clean-consumer npm tarball installation, declarations and subpath checks, multi-target RCL packing, package-restored .NET model tests, package-restored Server and WASM builds, one-megabyte interop checks, EditForm/remount checks and a GitHub Pages base-path smoke test.
+The release workflow runs on main pushes, pull requests and manual dispatch. Only trusted main runs can publish. Registry jobs run on explicit version changes or manual dispatch with `publish: true`; ordinary commits still validate and deploy Pages without attempting to overwrite immutable versions. The plan job retains an exact tracked source snapshot. It performs Node/format tests, real Chromium tests, an offline clean-consumer npm tarball installation, declarations and subpath checks, multi-target RCL packing, package-restored .NET model tests, package-restored Server and WASM builds, one-megabyte interop checks, EditForm/remount checks and a GitHub Pages base-path smoke test.
 
 Browser screenshots and test logs are uploaded even when a test fails. Tests of a writer round-tripping into its own reader are not desktop Microsoft Visio certification. See the compatibility matrix before changing version claims.
 

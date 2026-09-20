@@ -27,6 +27,7 @@ public partial class DrawingEditor : ComponentBase, IAsyncDisposable
     [Parameter] public bool ReadOnly { get; set; }
     [Parameter] public bool Grid { get; set; } = true;
     [Parameter] public bool Snap { get; set; } = true;
+    [Parameter] public bool Guides { get; set; } = true;
     [Parameter] public double GridSize { get; set; } = 20;
     [Parameter] public bool ShowToolbar { get; set; } = true;
     [Parameter] public string? PageId { get; set; }
@@ -108,7 +109,7 @@ public partial class DrawingEditor : ComponentBase, IAsyncDisposable
                     else await ReportAsync("REVISION_CONFLICT", "An external value was rejected because newer browser edits exist. Increase ValueRevision to force an intentional replacement.");
                     _lastInput = input; _appliedValueRevision = version;
                 }
-                await _module!.InvokeVoidAsync("setOptions", _token, _handle, DrawingInterop.Options(ReadOnly, Grid, Snap, GridSize, AriaLabel, PageId));
+                await _module!.InvokeVoidAsync("setOptions", _token, _handle, DrawingInterop.Options(ReadOnly, Grid, Snap, GridSize, AriaLabel, PageId, Guides));
                 if (RowsJson is not null && Bindings is not null)
                 {
                     var mappingKey = KeyField + "|" + TwoWayDataBinding + "|" + string.Join("|", Bindings.OrderBy(p => p.Key).Select(p => p.Key + "=" + p.Value));
@@ -147,7 +148,7 @@ public partial class DrawingEditor : ComponentBase, IAsyncDisposable
         _module = await JS.InvokeAsync<IJSObjectReference>("import", path);
         if (_disposed) return;
         _callback = DotNetObjectReference.Create(this);
-        var payload = await _module.InvokeAsync<JsonElement>("create", _host, _callback, DrawingInterop.Options(ReadOnly, Grid, Snap, GridSize, AriaLabel));
+        var payload = await _module.InvokeAsync<JsonElement>("create", _host, _callback, DrawingInterop.Options(ReadOnly, Grid, Snap, GridSize, AriaLabel, guides: Guides));
         var created = payload.Deserialize(DrawingInteropJsonContext.Default.CreateResult) ?? throw new JsonException("Missing native handle.");
         _handle = created.Id; _browserRevision = created.Revision;
         if (_disposed) return;

@@ -93,7 +93,35 @@
             using var input = new MemoryStream(exported.Bytes, writable: false);
             var imported = await _editor.ImportAsync(input, "roundtrip.drawing.json");
             if (!(await _editor.GetDocumentAsync()).Pages.SelectMany(p => p.Shapes).Any(s => s.Id == "start")) throw new Exception("JSON stream import lost shape identity.");
-            _testResult = "PASS — initialization, typed binding, undo/redo, command patches, selection, VSDX/SVG streams, typed rows and JSON stream import.";
+            var containerId = await _editor.CreateContainerAsync(["start", "db-1"], new DrawingContainerOptions { Name = "Typed container" });
+            var rich = new DrawingRichText { Paragraphs = [new DrawingTextParagraph { Runs = [new DrawingTextRun { Text = "Rich .NET text", Style = new DrawingRunStyle { Bold = true, Color = "#135cab" } }] }] };
+            await _editor.SetRichTextAsync("start", rich);
+            var calloutId = await _editor.CreateCalloutAsync("start", "C# callout");
+            var commentId = await _editor.AddCommentAsync("Review this shape", "Ada", "start");
+            await _editor.ReplyCommentAsync(commentId, "Reviewed from .NET", "Grace");
+            await _editor.AddHyperlinkAsync("start", new DrawingHyperlink { Address = "https://example.com/", Description = "Documentation" });
+            using var zero = JsonDocument.Parse("0");
+            await _editor.SetCellAsync("start", "Width", zero.RootElement, "2.5 in");
+            var features = await _editor.GetDocumentAsync();
+            if (features.Pages.SelectMany(p => p.Shapes).First(s => s.Id == containerId).Container!.MemberIds.Count != 2) throw new Exception("Container command did not preserve membership.");
+            var feature = features.Pages.SelectMany(p => p.Shapes).First(s => s.Id == "start");
+            if (feature.Width != 240 || feature.RichText!.Paragraphs[0].Runs[0].Style!.Bold != true) throw new Exception("Typed rich text or ShapeSheet projection failed.");
+            if (features.Comments!.First(c => c.Id == commentId).Replies[0].Author != "Grace") throw new Exception("Typed comment command failed.");
+            var cells = await _editor.GetCellsAsync("start");
+            if (cells.First(c => c.Name == "Width").Value.GetDouble() != 2.5) throw new Exception("Source-generated cell result failed.");
+            await _editor.DeactivateShapeSheetAsync();
+            using var rowKey = JsonDocument.Parse("\"key-1\"");
+            using var rowLabel = JsonDocument.Parse("\"Linked from typed .NET recordset\"");
+            var set = new DrawingRecordset { Id = "typed-recordset", Name = "Typed rows", Columns = [new DrawingDataColumn { Name = "id" }, new DrawingDataColumn { Name = "label" }], Rows = [new() { ["id"] = rowKey.RootElement.Clone(), ["label"] = rowLabel.RootElement.Clone() }] };
+            await _editor.UpsertRecordsetAsync(set);
+            await _editor.LinkDataAsync(calloutId, new DrawingDataLink { RecordsetId = set.Id, RowKey = rowKey.RootElement.Clone(), Mappings = new() { ["text"] = "label" } });
+            var linked = await _editor.GetDocumentAsync();
+            if (linked.Pages.SelectMany(p => p.Shapes).First(s => s.Id == calloutId).Text != "Linked from typed .NET recordset") throw new Exception("Typed keyed recordset projection failed.");
+            var masterId = await _editor.RegisterMasterAsync("Reusable", ".NET", new DrawingShape { Text = "From NuGet" });
+            var stencil = await _editor.ExportAsync("vssx");
+            if (stencil.Bytes.Length < 100 || stencil.Bytes[0] != 80) throw new Exception("Stencil package export failed.");
+            await _editor.DisbandContainerAsync(containerId);
+            _testResult = "PASS — initialization, typed binding, undo/redo, command patches, selection, VSDX/SVG streams, typed rows, JSON import, containers, rich text, ShapeSheet, comments, keyed recordsets and stencil export.";
         }
         catch (Exception error) { _testResult = "FAIL — " + error.Message; }
         finally { _testing = false; }
