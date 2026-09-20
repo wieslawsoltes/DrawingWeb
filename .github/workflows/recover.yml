@@ -1,0 +1,37 @@
+name: Recover interrupted parity source for review
+on:
+  push:
+    branches: [work/recover-visio-parity]
+permissions:
+  contents: read
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Extract available source prefix without executing it
+        run: |
+          mkdir -p artifacts/recovered
+          python3 - <<'PY'
+          import pathlib,lzma,json
+          parts=sorted(pathlib.Path('.recovery').glob('part-*'))
+          data=b''.join(p.read_bytes() for p in parts)
+          decoder=lzma.LZMADecompressor(memlimit=256*1024*1024)
+          raw=decoder.decompress(data,max_length=8*1024*1024)
+          pathlib.Path('artifacts/recovered/prefix.json.txt').write_bytes(raw)
+          print('Recovered bytes:',len(raw),'Complete archive:',decoder.eof)
+          print(raw[:400].decode('utf8',errors='replace'))
+          PY
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --ignore-scripts
+      - name: Archive compiler for offline qualification
+        run: tar -czf artifacts/recovered/compiler.tar.gz node_modules/typescript
+      - uses: actions/upload-artifact@v4
+        with:
+          name: recovered-parity
+          path: artifacts/recovered
+          retention-days: 7
