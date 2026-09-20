@@ -44,7 +44,7 @@ The normalized JSON model retains DrawingWeb semantics, not every original OPC p
 
 ## Qualification performed and still required
 
-The local JavaScript qualification currently contains 88 passing Node tests and 40 offline browser checks. Packaging tests install the npm tarball into an isolated consumer and exercise ESM, CommonJS, declarations and 12 public subpaths. CI additionally qualifies HTTP ES modules/IndexedDB, the packed NuGet on .NET 8 and .NET 10, and release-mode Server and trimmed WebAssembly browser hosts. Consult the actual run for results; this document does not predeclare a CI result.
+The local JavaScript qualification currently contains 88 passing Node tests and 43 offline browser checks. Packaging tests install the npm tarball into an isolated consumer and exercise ESM, CommonJS, declarations and 12 public subpaths. CI additionally qualifies HTTP ES modules/IndexedDB, the packed NuGet on .NET 8 and .NET 10, and release-mode Server and trimmed WebAssembly browser hosts. Consult the actual run for results; this document does not predeclare a CI result.
 
 The new suite contains synthetic native-format fixtures (including reverse membership roles, ordinary lists, native row maps and package MIME/relationship names), not a complete independent desktop corpus. Before asserting full interoperability, open exported files in supported Visio desktop versions; compare each page against reference images; verify semantic editing, keys and refresh; and perform save/reopen/edit cycles on rights-cleared complex documents. Physical touch, screen readers, provider-specific database isolation, production CSP, reconnect behavior and high-entity-count benchmarks need separate qualification.
 

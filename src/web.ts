@@ -184,7 +184,7 @@ export class DrawingControl {
     listen('dragover',e=>{if(!this.options.readOnly&&e.dataTransfer?.types.includes('application/x-drawingweb-stencil')){e.preventDefault();e.dataTransfer.dropEffect='copy';}});
     listen('drop',e=>this.safe(()=>{if(this.options.readOnly)return;const kind=e.dataTransfer?.getData('application/x-drawingweb-stencil') as ShapeKind;if(kind&&STENCILS.includes(kind)){e.preventDefault();this.addShape(kind,this.worldPoint(e));}}));
     this.subscriptions.push(this.renderer.invalidated.subscribe(()=>this.invalidate()),this.renderer.errors.subscribe(error=>this.errors.emit(error)));
-    this.subscriptions.push(this.engine.changed.subscribe(()=>{if(!this.engine.document.pages.some(p=>p.id===this._pageId))this._pageId=this.engine.document.pages[0]!.id;this.updateAccessible();this.invalidate();}),this.engine.selectionChanged.subscribe(()=>{this.updateAccessible();this.live.textContent=`${this.engine.selection.length} shape${this.engine.selection.length===1?'':'s'} selected`;this.invalidate();}));
+    this.subscriptions.push(this.engine.changed.subscribe(change=>{if(change.origin==='load'){this.cancelGesture();this.finishText(false);}this.updateAccessible();this.invalidate();}),this.engine.selectionChanged.subscribe(()=>{this.updateAccessible();this.live.textContent=`${this.engine.selection.length} shape${this.engine.selection.length===1?'':'s'} selected`;this.invalidate();}));
     this.updateAccessible();this.invalidate();
   }
   get isDisposed():boolean{return this.disposed;}
@@ -294,7 +294,15 @@ export class DrawingControl {
   pasteShapes(shapes:readonly Shape[]):string[]{if(this.readOnly)throw new DrawingError('READ_ONLY','This diagram is read-only.');validateJson(shapes);if(!Array.isArray(shapes)||shapes.length>100000)throw new DrawingError('CLIPBOARD_LIMIT','Clipboard must be a bounded shape array.');const ids=new Map<string,string>();const reserve=(s:Shape)=>{if(!s||typeof s.id!=='string'||ids.has(s.id)||ids.size>=100000)throw new DrawingError('CLIPBOARD_SHAPE','Invalid or duplicate clipboard identity.');ids.set(s.id,id());s.children?.forEach(reserve);};shapes.forEach(reserve);
     const copy=(s:Shape):Shape=>({...clone(s),id:ids.get(s.id)!,sheetId:undefined,layerId:this.engine.getPage(this.pageId).layers.some(l=>l.id===s.layerId)?s.layerId:undefined,dataLinks:s.dataLinks?.filter(l=>this.engine.document.recordsets?.some(r=>r.id===l.recordsetId)),dataGraphicId:this.engine.document.dataGraphics?.some(g=>g.id===s.dataGraphicId)?s.dataGraphicId:undefined,container:s.container?{...s.container,memberIds:s.container.memberIds.map(k=>ids.get(k)).filter((k):k is string=>!!k)}:undefined,calloutTargetId:ids.get(s.calloutTargetId??'')??(this.engine.getRef(s.calloutTargetId??'')?.pageId===this.pageId?s.calloutTargetId:undefined),children:s.children?.map(copy),source:s.source?{...s.source,shapeId:ids.get(s.source.shapeId??'')??(this.engine.getRef(s.source.shapeId??'')?.pageId===this.pageId?s.source.shapeId:undefined)}:undefined,target:s.target?{...s.target,shapeId:ids.get(s.target.shapeId??'')??(this.engine.getRef(s.target.shapeId??'')?.pageId===this.pageId?s.target.shapeId:undefined)}:undefined});const additions=shapes.map(s=>{const result=copy(s);result.x+=24;result.y+=24;return result;});this.engine.addMany(this.pageId,additions);const result=additions.map(s=>s.id);this.engine.select(result);return result;
   }
-  private updateAccessible():void{if(this.disposed)return;const doc=this.host.ownerDocument,fragment=doc.createDocumentFragment();const selected=new Set(this.engine.selection);this.renderer.prepare(this.pageId);
+  /** Selection cleanup can notify before document-change observers on load, removal and redo. */
+  private reconcilePage():void {
+    if (this.engine.document.pages.some(page=>page.id===this._pageId)) return;
+    // Switch first: cancelling captured input may synchronously invoke other view observers.
+    this._pageId=this.engine.document.pages[0]!.id;
+    this.cancelGesture();
+    this.finishText(false);
+  }
+  private updateAccessible():void{if(this.disposed)return;this.reconcilePage();const doc=this.host.ownerDocument,fragment=doc.createDocumentFragment();const selected=new Set(this.engine.selection);this.renderer.prepare(this.pageId);
     for(const item of this.renderer.displayList.slice(0,5000)){const option=doc.createElement('div');option.id=`dw-${this.canvas.getAttribute('aria-describedby')}-${item.shape.id}`;option.setAttribute('role','option');option.setAttribute('aria-selected',String(selected.has(item.shape.id)));option.textContent=item.shape.text||`${item.shape.kind} ${item.shape.id}`;fragment.append(option);}this.accessibility.replaceChildren(fragment);
     const active=this.engine.selection.at(-1);if(active)this.canvas.setAttribute('aria-activedescendant',`dw-${this.canvas.getAttribute('aria-describedby')}-${active}`);else this.canvas.removeAttribute('aria-activedescendant');this.canvas.setAttribute('aria-owns',this.accessibility.id||(this.accessibility.id=id('shapes')));
   }
