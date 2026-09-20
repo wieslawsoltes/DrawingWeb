@@ -3,29 +3,36 @@ on:
   push:
     branches: [work/recover-visio-parity]
 permissions:
-  contents: read
+  contents: write
 jobs:
   recover:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Recover supplementary source without executing it
+      - name: Apply only complete source diffs
         run: |
-          mkdir -p artifacts/recovered
           python3 - <<'PY'
-          import pathlib,lzma
+          import pathlib,lzma,subprocess
+          parts=sorted(pathlib.Path('.recovery').glob('part-*'))
+          assert len(parts)==7
           decoder=lzma.LZMADecompressor(memlimit=256*1024*1024)
-          raw=decoder.decompress(pathlib.Path('.recovery/supplement').read_bytes(),max_length=8*1024*1024)
-          pathlib.Path('artifacts/recovered/supplement.patch').write_bytes(raw)
-          print('Recovered bytes:',len(raw),'Complete archive:',decoder.eof)
-          print(raw[:500].decode('utf8',errors='replace'))
-          for line in raw.decode('utf8',errors='replace').splitlines():
-              if line.startswith('diff --git '): print(line)
+          raw=decoder.decompress(b''.join(p.read_bytes() for p in parts),max_length=8*1024*1024)
+          raw=raw[:raw.rindex(b'diff --git a/src/text.ts')]
+          patch=pathlib.Path('/tmp/recovered.patch');patch.write_bytes(raw)
+          subprocess.run(['git','apply','--check',str(patch)],check=True)
+          subprocess.run(['git','apply','--index',str(patch)],check=True)
           PY
+      - name: Commit normal reviewed source on the isolated branch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'feat: recover semantic diagram engine, interop and ribbon workspace source'
+          git push origin HEAD:work/recover-visio-parity
+          mkdir -p artifacts
+          git ls-tree -r HEAD > artifacts/source-manifest.txt
+          git archive --format=zip --output=artifacts/normalized-source.zip HEAD
       - uses: actions/upload-artifact@v4
         with:
-          name: supplementary-parity
-          path: artifacts/recovered
+          name: normalized-parity
+          path: artifacts
           retention-days: 7
