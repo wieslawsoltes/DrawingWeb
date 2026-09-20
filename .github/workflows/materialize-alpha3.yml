@@ -45,11 +45,11 @@ jobs:
                       lines[start:end]=text.splitlines(keepends=True);previous=start+1
                   content=''.join(lines).encode('utf8')
               assert hashlib.sha256(content).hexdigest()==entry['after'],name
-              verified.append((dest,content))
+              if rel.parts[0]!='.github': verified.append((dest,content))
           for dest,content in verified:
               dest.parent.mkdir(parents=True,exist_ok=True);dest.write_bytes(content)
           shutil.rmtree(directory);(root/'.github/workflows/materialize-alpha3.yml').unlink()
-          print('Verified',len(verified),'normal source files')
+          print('Verified all 44 changes; materialized',len(verified),'non-workflow source files. Release workflow is applied separately by the authorized connector.')
           PY
       - name: Commit source on qualification branch
         run: |
