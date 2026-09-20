@@ -1,0 +1,126 @@
+name: Qualify live Visio semantics alpha.3
+on:
+  push:
+    branches: [work/visio-alpha3]
+permissions:
+  contents: write
+concurrency:
+  group: drawingweb-alpha3-qualification
+  cancel-in-progress: false
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify and materialize exact source changes
+        run: |
+          python3 - <<'PY'
+          import hashlib,json,lzma,pathlib,shutil
+          root=pathlib.Path.cwd();directory=root/'.delivery'
+          names=[f'part-{i:02d}' for i in range(5)]
+          assert sorted(p.name for p in directory.iterdir())==names
+          data=b''.join((directory/p).read_bytes() for p in names)
+          assert len(data)==40252 and hashlib.sha256(data).hexdigest()=='0fb704aefd4fe88befddc88ed952109e86d40b0a0daf0fae69a183236962b98d'
+          decoder=lzma.LZMADecompressor(memlimit=256*1024*1024)
+          raw=decoder.decompress(data,max_length=152520)
+          assert decoder.eof and not decoder.unused_data and len(raw)==152519
+          assert hashlib.sha256(raw).hexdigest()=='60131299b0e7b5ac4dad9bf29e809d14e2c9ffa8d1a8b22bac20cac11161980d'
+          entries=json.loads(raw);assert len(entries)==44
+          verified=[];seen=set()
+          for entry in entries:
+              name=entry['path'];rel=pathlib.PurePosixPath(name)
+              assert name not in seen and not rel.is_absolute() and '..' not in rel.parts and '\\' not in name and str(rel)==name
+              assert rel.parts[0] not in ('.git','.delivery','.recovery')
+              assert rel.parts[0]!='.github' or name=='.github/workflows/release.yml'
+              seen.add(name);dest=root.joinpath(*rel.parts)
+              assert not any(p.is_symlink() for p in [dest,*dest.parents])
+              if entry['before'] is None:
+                  assert not dest.exists();content=entry['content'].encode('utf8')
+              else:
+                  original=dest.read_bytes();assert hashlib.sha256(original).hexdigest()==entry['before'],name
+                  lines=original.decode('utf8').splitlines(keepends=True);previous=len(lines)+1
+                  for start,end,text in reversed(entry['edits']):
+                      assert 0<=start<=end<previous
+                      lines[start:end]=text.splitlines(keepends=True);previous=start+1
+                  content=''.join(lines).encode('utf8')
+              assert hashlib.sha256(content).hexdigest()==entry['after'],name
+              verified.append((dest,content))
+          for dest,content in verified:
+              dest.parent.mkdir(parents=True,exist_ok=True);dest.write_bytes(content)
+          shutil.rmtree(directory);(root/'.github/workflows/materialize-alpha3.yml').unlink()
+          print('Verified',len(verified),'normal source files')
+          PY
+      - name: Commit source on qualification branch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'feat: live master inheritance, guarded ShapeSheet writes, text fields and native qualification'
+          git push origin HEAD:work/visio-alpha3
+          mkdir -p artifacts/qualification
+          git rev-parse HEAD > artifacts/qualification/commit.txt
+          git rev-parse 'HEAD^{tree}' > artifacts/qualification/tree.txt
+          git ls-tree -r HEAD > artifacts/qualification/source-manifest.txt
+          git archive --format=zip --output=artifacts/qualification/drawingweb-source.zip HEAD
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - run: npm ci --ignore-scripts
+      - name: Node and isolated npm consumer qualification
+        run: npm run check > artifacts/qualification/native.log 2>&1 || { cat artifacts/qualification/native.log; exit 1; }
+      - name: Compile optional desktop adapter without running Visio
+        run: |
+          dotnet build tools/DrawingWeb.VisioDesktop/DrawingWeb.VisioDesktop.csproj -c Release
+          dotnet run --project tools/DrawingWeb.VisioDesktop/DrawingWeb.VisioDesktop.csproj -c Release --no-build -- --help
+      - name: Pack and inspect self-contained Blazor RCL
+        run: |
+          dotnet pack blazor/DrawingWeb.Blazor/DrawingWeb.Blazor.csproj -c Release -p:RepositoryCommit=$(git rev-parse HEAD) -o artifacts/nuget
+          python scripts/verify-nuget.py
+      - name: Package-restored models on both target frameworks
+        run: |
+          dotnet run --project blazor/tests/DrawingWeb.ModelTests.csproj -c Release -f net8.0
+          dotnet run --project blazor/tests/DrawingWeb.ModelTests.csproj -c Release -f net10.0
+      - name: Package-restored Server and trimmed WebAssembly consumers
+        run: |
+          dotnet build blazor/samples/Server/DrawingWeb.ServerSample.csproj -c Release -f net8.0
+          dotnet publish blazor/samples/Server/DrawingWeb.ServerSample.csproj -c Release -f net10.0 -o artifacts/server
+          dotnet publish blazor/samples/WebAssembly/DrawingWeb.WebAssemblySample.csproj -c Release -o artifacts/wasm
+      - name: Install browser qualification dependencies
+        run: |
+          python -m pip install --quiet playwright==1.57.0 Pillow==12.3.0
+          python -m playwright install --with-deps chromium > /tmp/browser-install.log 2>&1 || { tail -n 80 /tmp/browser-install.log; exit 1; }
+      - name: Native HTTP editor, live semantics and comparison regressions
+        run: |
+          python tests/compare_png_test.py
+          python tests/browser.py
+      - name: Compose Pages and qualify real Blazor hosts
+        env:
+          PAGES_BASE_PATH: /DrawingWeb/
+        run: |
+          node scripts/compose-site.mjs
+          python tests/blazor-browser.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: alpha3-qualification
+          path: |
+            artifacts/qualification
+            artifacts/browser
+            artifacts/blazor-browser
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        with:
+          name: alpha3-packages
+          path: |
+            artifacts/npm/*.tgz
+            artifacts/nuget/*nupkg
