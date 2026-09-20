@@ -1,6 +1,17 @@
 import { DrawingError } from './model.js';
 export type FormulaValue = number | string | boolean;
 export type FormulaResolver = (reference: string) => FormulaValue;
+export interface FormulaContext { call?: (name: string, arguments_: readonly FormulaValue[]) => FormulaValue | undefined }
+export interface FormulaWritePlan { formula: string; assignments: { reference: string; formula: string }[] }
+const printAst = (node: Ast): string => {
+  switch (node.type) {
+    case 'literal': return typeof node.value === 'string' ? '"' + node.value.replaceAll('"', '""') + '"' : String(node.value);
+    case 'ref': return node.name;
+    case 'unary': return '(' + node.op + printAst(node.value) + ')';
+    case 'binary': return '(' + printAst(node.left) + node.op + printAst(node.right) + ')';
+    case 'call': return node.name + '(' + node.args.map(printAst).join(',') + ')';
+  }
+};
 type Ast = {type:'literal';value:FormulaValue}|{type:'ref';name:string}|{type:'unary';op:string;value:Ast}|{type:'binary';op:string;left:Ast;right:Ast}|{type:'call';name:string;args:Ast[]};
 interface Token { text:string; type:'number'|'string'|'name'|'op'|'end' }
 const precedence:Record<string,number>={'=':1,'==':1,'<>':1,'!=':1,'<':1,'>':1,'<=':1,'>=':1,'&':2,'+':3,'-':3,'*':4,'/':4,'%':4,'^':5};
@@ -40,7 +51,51 @@ export class Formula {
     };
     this.ast=expression();if(peek().type!=='end')throw new DrawingError('FORMULA_SYNTAX','Unexpected trailing input.');this.dependencies=refs;
   }
-  evaluate(resolve:FormulaResolver=reference=>{throw new DrawingError('FORMULA_REFERENCE',`Unknown reference: ${reference}`);}):FormulaValue{
+  /** Plan an Automation/UI write without mutating any cells or executing host code.
+   * Values are in the same internal units used to parse this formula. Assignment expressions
+   * are canonicalized; SETATREFEVAL is reduced at write time and SETATREFEXPR stores the write.
+   */
+  planWrite(value: FormulaValue, resolve: FormulaResolver): FormulaWritePlan | undefined {
+    if (typeof value === 'number' && !Number.isFinite(value)) throw new DrawingError('FORMULA_VALUE', 'A cell write must be finite.');
+    const assignments: FormulaWritePlan['assignments'] = []; let stores = false, budget = 8192;
+    const literal: Ast = { type: 'literal', value };
+    const substitute = (node: Ast): Ast => {
+      if (--budget < 0) throw new DrawingError('FORMULA_BUDGET', 'Write planning exceeded the operation budget.');
+      if (node.type === 'call') {
+        if (node.name === 'SETATREFEXPR') return literal;
+        const result: Ast = { ...node, args: node.args.map(substitute) };
+        return node.name === 'SETATREFEVAL' ? { type: 'literal', value: new Formula(printAst(result)).evaluate(resolve) } : result;
+      }
+      if (node.type === 'unary') return { ...node, value: substitute(node.value) };
+      if (node.type === 'binary') return { ...node, left: substitute(node.left), right: substitute(node.right) };
+      return node;
+    };
+    const visit = (node: Ast, inAssignment = false): Ast => {
+      if (--budget < 0) throw new DrawingError('FORMULA_BUDGET', 'Write planning exceeded the operation budget.');
+      if (node.type === 'call') {
+        if (node.name === 'GUARD' && !inAssignment) throw new DrawingError('FORMULA_GUARD', 'The cell is guarded. Use an explicit formula edit to replace its expression.');
+        if (node.name === 'SETATREF') {
+          if (inAssignment) throw new DrawingError('FORMULA_WRITE_UNSUPPORTED', 'Nested SETATREF inside an assignment expression is unsupported.');
+          if (node.args.length < 1 || node.args.length > 3 || node.args[0]?.type !== 'ref') throw new DrawingError('FORMULA_REFERENCE', 'SETATREF requires a cell reference.');
+          const expression = node.args[1] ? substitute(node.args[1]) : literal;
+          assignments.push({ reference: node.args[0].name, formula: printAst(expression) });
+          return { ...node, args: node.args.map((arg, i) => i === 1 ? visit(arg, true) : arg) };
+        }
+        if (node.name === 'SETATREFEXPR') { stores = true; return { ...node, args: [literal] }; }
+        // Conditional write targets need branch-selection semantics, not an eager walk.
+        if (['IF', 'IFERROR', 'AND', 'OR'].includes(node.name) && /SETATREF(?:EXPR)?\(/.test(printAst(node)))
+          throw new DrawingError('FORMULA_WRITE_UNSUPPORTED', 'Conditional write routing must be authored as an unconditional SETATREF expression.');
+        return { ...node, args: node.args.map(arg => visit(arg, inAssignment)) };
+      }
+      if (node.type === 'unary') return { ...node, value: visit(node.value, inAssignment) };
+      if (node.type === 'binary') return { ...node, left: visit(node.left, inAssignment), right: visit(node.right, inAssignment) };
+      return node;
+    };
+    const result = visit(this.ast);
+    return assignments.length || stores ? { formula: stores ? printAst(result) : this.source, assignments } : undefined;
+  }
+
+  evaluate(resolve:FormulaResolver=reference=>{throw new DrawingError('FORMULA_REFERENCE',`Unknown reference: ${reference}`);}, context:FormulaContext={}):FormulaValue{
     let budget=16384;const num=(v:FormulaValue)=>{const n=Number(v);if(!Number.isFinite(n))throw new DrawingError('FORMULA_VALUE','Expected a finite number.');return n;};
     const run=(node:Ast):FormulaValue=>{if(--budget<0)throw new DrawingError('FORMULA_BUDGET','Formula operation budget exceeded.');
       switch(node.type){
@@ -55,6 +110,11 @@ export class Formula {
           if(node.name==='AND'){need(1,256);return args.every(arg=>Boolean(run(arg)));}
           if(node.name==='OR'){need(1,256);return args.some(arg=>Boolean(run(arg)));}
           if(node.name==='GUARD'){need(1);return run(args[0]!);}
+          if(node.name==='SETATREF'){need(1,3);return args[2]&&run(args[2])?0:run(args[0]!);}
+          if(node.name==='SETATREFEXPR'){need(0,1);return args[0]?run(args[0]):0;}
+          if(node.name==='SETATREFEVAL'){need(1);return run(args[0]!);}
+          if(context.call){const extension=context.call(node.name,args.map(run));if(extension!==undefined)return extension;}
+
           if(node.name==='NOT'){need(1);return !run(args[0]!);}
           if(node.name==='CONCAT'||node.name==='CONCATENATE'){need(1,256);return args.map(arg=>String(run(arg))).join('');}
           if(node.name==='LEN'){need(1);return String(run(args[0]!)).length;}

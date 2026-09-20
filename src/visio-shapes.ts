@@ -6,7 +6,7 @@ import type { XmlElement, XmlChild } from './xml.js';
 export const DW_NAMESPACE='urn:drawingweb:extensions:1';
 type Report=(code:string,message:string)=>void;
 const cell=(n:string,v:string|number,f?:string)=>element('Cell',{N:n,V:v,...(f?{F:f}:{})});
-const section=(n:XmlElement,name:string)=>elements(n,'Section').find(s=>s.attributes['N']===name);
+const section=(n:XmlElement,name:string)=>elements(n,'Section').find(s=>s.attributes['N']===name&&s.attributes['Del']!=='1');
 const val=(n:XmlElement|undefined,key:string,fallback='')=>n?elements(n,'Cell').find(c=>c.attributes['N']===key)?.attributes['V']??fallback:fallback;
 const num=(n:XmlElement|undefined,key:string,fallback=0)=>{const v=Number(val(n,key,String(fallback)));return Number.isFinite(v)?v:fallback;};
 const unquote=(s:string)=>s.startsWith('"')&&s.endsWith('"')?s.slice(1,-1).replaceAll('""','"'):s;
@@ -31,13 +31,20 @@ export function readShapeExtensions(node:XmlElement,s:Shape,font:(id:string)=>st
   const style=():NonNullable<TextRun['style']>=>{const r=chars.find(c=>(c.attributes['IX']??'0')===ci),flags=num(r,'Style');if(flags&8)report('SMALL_CAPS_APPROXIMATED','Small caps remain cached in the source and are displayed without case shaping.');return{fontFamily:font(val(r,'Font','0')),fontSize:num(r,'Size',s.style.fontSize/96)*96,color:color(val(r,'Color',s.style.color)),bold:!!(flags&1),italic:!!(flags&2),underline:!!(flags&4),strike:['1','true'].includes(val(r,'Strikethru').toLowerCase())};};
   const paragraph=()=>{const r=paras.find(p=>(p.attributes['IX']??'0')===pi);return{runs:[],align:(['left','center','right'] as const)[num(r,'HorzAlign',1)]??'left',indent:num(r,'IndLeft')*96,spaceBefore:num(r,'SpBefore')*96,spaceAfter:num(r,'SpAfter')*96} satisfies TextParagraph;};
   const append=(value:string)=>{const lines=value.split('\n');for(let i=0;i<lines.length;i++){if(!current){current=paragraph();paragraphs.push(current);}if(lines[i])current.runs.push({text:lines[i]!,style:style()});if(i<lines.length-1)current=undefined;}};
-  for(const child of text.children){if(typeof child==='string')append(child);else if(isElement(child)){switch(localName(child.name)){case'cp':ci=child.attributes['IX']??'0';break;case'pp':pi=child.attributes['IX']??'0';break;case'fld':append(textContent(child));report('TEXT_FIELD_CACHED','A text field is displayed using its cached value.');break;default:append(textContent(child));}}}
+  for(const child of text.children){if(typeof child==='string')append(child);else if(isElement(child)){switch(localName(child.name)){case'cp':ci=child.attributes['IX']??'0';break;case'pp':pi=child.attributes['IX']??'0';break;case'fld':{
+ const row=elements(section(node,'Field')??element('none'),'Row').find(r=>r.attributes['IX']===child.attributes['IX']&&r.attributes['Del']!=='1');
+ const valueCell=row?elements(row,'Cell').find(c=>c.attributes['N']==='Value'):undefined;
+ const formula=valueCell?.attributes['F'];
+ if(!current){current=paragraph();paragraphs.push(current);}
+ current.runs.push({text:textContent(child),style:style(),...(formula?{field:{formula,value:valueCell?.attributes['V'],unit:valueCell?.attributes['U'],nativeFormat:val(row,'Format')||undefined}}:{})});
+ report('TEXT_FIELD_CACHED','Field formula and cached text were retained; activate fields explicitly to recalculate.');break;
+}default:append(textContent(child));}}}
   if(paragraphs.length&&elements(text).length){if(!current&&textContent(text).endsWith('\n'))paragraphs.push(paragraph());s.richText={paragraphs};s.text=plainText(s.richText);}
  }
  if(elements(node,'Cell').some(c=>c.attributes['N']==='TxtWidth')){const w=num(node,'TxtWidth',s.width/96)*96,h=num(node,'TxtHeight',s.height/96)*96;s.textBlock={x:num(node,'TxtPinX',s.width/192)*96-num(node,'TxtLocPinX',w/192)*96,y:s.height-num(node,'TxtPinY',s.height/192)*96-(h-num(node,'TxtLocPinY',h/192)*96),width:w,height:h,rotation:-num(node,'TxtAngle')};}
  for(const sec of ['User','Property'])for(const row of elements(section(node,sec)??element('none'),'Row')){const name=row.attributes['N'];if(!name||name==='DrawingWebMetadata'||row.attributes['Del']==='1')continue;const v=elements(row,'Cell').find(c=>c.attributes['N']==='Value');if(v)s.cells[(sec==='User'?'User.':'Prop.')+name]={value:v.attributes['V']??'',formula:v.attributes['F'],unit:v.attributes['U']};}
  // Supplement native text with application-only metadata only while cached text still matches.
- const extra=user(node,'DrawingWebMetadata');if(extra){try{if(extra.length>2_000_000)throw new Error('too large');const v=JSON.parse(extra) as Partial<Shape>;validateJson(v);if(v.richText&&s.richText&&plainText(v.richText)===s.text&&v.richText.paragraphs.length===s.richText.paragraphs.length){for(const [i,p]of s.richText.paragraphs.entries()){const extra=v.richText.paragraphs[i]!;p.bullet=extra.bullet;for(const [j,run]of p.runs.entries()){const cached=extra.runs[j];if(cached?.text===run.text&&cached.field)run.field=cached.field;}}}if(v.container&&s.container)s.container={...v.container,memberIds:[]};if(v.kind&&['container','swimlane','callout','image'].includes(v.kind))s.kind=v.kind;if(v.style)s.style={...s.style,...v.style};if(v.textBlock)s.textBlock=v.textBlock;}catch{report('DRAWINGWEB_METADATA','Invalid application metadata was ignored.');}}
+ const extra=user(node,'DrawingWebMetadata');if(extra){try{if(extra.length>2_000_000)throw new Error('too large');const v=JSON.parse(extra) as Partial<Shape>;validateJson(v);if(v.richText&&s.richText&&plainText(v.richText)===s.text&&v.richText.paragraphs.length===s.richText.paragraphs.length){for(const [i,p]of s.richText.paragraphs.entries()){const extra=v.richText.paragraphs[i]!;p.bullet=extra.bullet;for(const [j,run]of p.runs.entries()){const cached=extra.runs[j];if(cached?.text===run.text&&cached.field&&!run.field)run.field=cached.field;}}}if(v.container&&s.container)s.container={...v.container,memberIds:[]};if(v.kind&&['container','swimlane','callout','image'].includes(v.kind))s.kind=v.kind;if(v.style)s.style={...s.style,...v.style};if(v.textBlock)s.textBlock=v.textBlock;}catch{report('DRAWINGWEB_METADATA','Invalid application metadata was ignored.');}}
 }
 export function readStructuralRelationships(page:Page,diagnostics:Diagnostic[]):void {
  const all:Shape[]=[];const parents=new Map<string,string|undefined>();const walk=(items:Shape[],parent?:string)=>{for(const s of items){all.push(s);parents.set(s.id,parent);if(s.children)walk(s.children,s.id);}};walk(page.shapes);const map=new Map<number,Shape>();for(const s of all)if(s.sheetId!==undefined)map.set(s.sheetId,s);
@@ -48,10 +55,15 @@ export function writeShapeExtensions(node:XmlElement,s:Shape,page:Page,ids:Map<s
  const deps=new Map(incoming.get(s.id)??[]);if(s.container){putUser(node,'msvStructureType',s.container.layout?'List':'Container');deps.set(s.container.layout?2:1,s.container.memberIds);}if(s.calloutTargetId){putUser(node,'msvStructureType','Callout');deps.set(6,[s.calloutTargetId]);}
  if(deps.size)node.children.push(cell('Relationships',0,[...deps].map(([k,refs])=>`DEPENDSON(${k},${refs.filter(x=>ids.has(x)).map(x=>`Sheet.${ids.get(x)}!SheetRef()`).join(',')})`).join('+')));
  if(s.hyperlinks?.length)replaceSection(node,'Hyperlink',element('Section',{N:'Hyperlink'},s.hyperlinks.map((h,i)=>element('Row',{N:`Link${i}`},[cell('Description',h.description),cell('Address',h.address??''),cell('SubAddress',h.subAddress??(h.pageId??'')),cell('NewWindow',h.newWindow===false?0:1)]))));
- if(s.richText){const characterRows:XmlElement[]=[],paragraphRows:XmlElement[]=[],content:XmlChild[]=[];
+ if(s.richText){const characterRows:XmlElement[]=[],paragraphRows:XmlElement[]=[],fieldRows:XmlElement[]=[],content:XmlChild[]=[];
   for(const [i,p]of s.richText.paragraphs.entries()){if(i)content.push('\n');content.push(element('pp',{IX:i}));paragraphRows.push(element('Row',{IX:i},[cell('HorzAlign',{left:0,center:1,right:2}[p.align??s.style.align]),cell('IndLeft',(p.indent??0)/96),cell('SpBefore',(p.spaceBefore??0)/96),cell('SpAfter',(p.spaceAfter??0)/96)]));
-   for(const r of p.runs){const st={...s.style,...r.style},index=characterRows.length;characterRows.push(element('Row',{IX:index},[cell('Font',font(st.fontFamily)),cell('Size',st.fontSize/96),cell('Color',color(st.color)),cell('Style',(st.bold?1:0)+(st.italic?2:0)+(st.underline?4:0)),cell('Strikethru',st.strike?1:0)]));content.push(element('cp',{IX:index}),r.text);if(r.field)report('TEXT_FIELD_CACHED','Field formulas are retained as application metadata; native export uses cached text.');}
+   for(const r of p.runs){const st={...s.style,...r.style},index=characterRows.length;characterRows.push(element('Row',{IX:index},[cell('Font',font(st.fontFamily)),cell('Size',st.fontSize/96),cell('Color',color(st.color)),cell('Style',(st.bold?1:0)+(st.italic?2:0)+(st.underline?4:0)),cell('Strikethru',st.strike?1:0)]));content.push(element('cp',{IX:index}));if(r.field){
+ const fieldIndex=fieldRows.length,format=r.field.format,formula=format?`FORMAT(${r.field.formula},"${format.replaceAll('"','""')}")`:r.field.formula;
+ fieldRows.push(element('Row',{IX:fieldIndex},[element('Cell',{N:'Value',V:r.field.value??r.text,F:formula,...(r.field.unit?{U:r.field.unit}:{})}),cell('Format',r.field.nativeFormat??0)]));
+ content.push(element('fld',{IX:fieldIndex},[r.text]));
+ }else content.push(r.text);}
   }
+  if(fieldRows.length)replaceSection(node,'Field',element('Section',{N:'Field'},fieldRows));
   replaceSection(node,'Character',element('Section',{N:'Character'},characterRows));replaceSection(node,'Paragraph',element('Section',{N:'Paragraph'},paragraphRows));replace(node,'Text',element('Text',{},content));
  }
  if(s.textBlock){const b=s.textBlock;node.children.push(cell('TxtWidth',b.width/96),cell('TxtHeight',b.height/96),cell('TxtPinX',(b.x+b.width/2)/96),cell('TxtPinY',(s.height-b.y-b.height/2)/96),cell('TxtLocPinX',b.width/192),cell('TxtLocPinY',b.height/192),cell('TxtAngle',-(b.rotation??0)));}

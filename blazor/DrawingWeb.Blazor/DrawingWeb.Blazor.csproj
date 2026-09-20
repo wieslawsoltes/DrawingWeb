@@ -2,7 +2,7 @@
   <PropertyGroup>
     <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
     <Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings><LangVersion>12.0</LangVersion>
-    <Version>0.1.0-alpha.2</Version><PackageId>DrawingWeb.Blazor</PackageId><Authors>DrawingWeb contributors</Authors>
+    <Version>0.1.0-alpha.3</Version><PackageId>DrawingWeb.Blazor</PackageId><Authors>DrawingWeb contributors</Authors>
     <Description>Self-contained, data-bound diagram editor for Blazor Server and WebAssembly. Includes the DrawingWeb engine and documented VSDX/VDX interchange profiles.</Description>
     <PackageTags>blazor;diagram;drawing;visio;vsdx;data-binding</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression><PackageReadmeFile>README.md</PackageReadmeFile>

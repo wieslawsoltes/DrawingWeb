@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.0-alpha.3
+
+- Fix cell-granular native master/style inheritance, Inh cached values, deleted-row tombstones,
+  partial master child collections, style cycles and inheritance recursion limits.
+- Add persistent live master channels, atomic definition edits, per-channel local overrides,
+  restore/detach, and cached-field-safe propagation. Geometry remains instance-local.
+- Add GUARD-respecting user writes, SETATREF assignment routing, SETATREFEXPR storage,
+  SETATREFEVAL write-time folding, parent references and rollback on cyclic/unsupported writes.
+- Read and write native Field rows/fld markers without flattening formulas; opt-in live fields
+  and explicit deterministic numeric formatting with cached fallback diagnostics.
+- Add DrawingML palette/Latin font import and explicitly supported ordered color transforms.
+- Add corresponding typed, source-generated Blazor models/APIs and functional ribbon controls.
+- Add optional local Windows/installed-Visio legacy conversion, PNG/SVG reference capture,
+  a hashed manifest, an import conformance gate, and a no-resampling PNG difference tool.
+- Add regression tests and retain explicit parity boundaries; full native desktop qualification
+  and portable binary/metafile/complete ShapeSheet/Quick Style support are not claimed.
+
+
 ## 0.1.0-alpha.2 — semantic workspace expansion
 
 Added semantic containers/lists and auto-fitting membership locks, cross-functional pools, callouts, comments/replies, hyperlinks, rich runs/paragraphs/editing, shared Canvas/SVG layout, embedded raster media, background pages, original themes and derived data graphics. Added typed recordsets, stable-key linking/refresh, ADO XML and native Visio recordset/row-map projection. Added opt-in unit-aware ShapeSheet dependency projection and VSSX/VSTX package profiles, including unplaced master media.

@@ -1,3 +1,4 @@
+import { mergeVisioShape, resolveVisioStyle } from './visio-inheritance.js';
 import { DW_NAMESPACE, structuralIndex, readShapeExtensions, writeShapeExtensions, readStructuralRelationships, writeComments, readComments } from './visio-shapes.js';
 import { readRecordsets, writeRecordsets } from './visio-data.js';
 export { readAdoRecordset, writeAdoRecordset } from './visio-data.js';
@@ -30,7 +31,7 @@ function value(node:XmlElement|undefined,name:string,fallback=''):string{return 
 function numberCell(node:XmlElement|undefined,name:string,fallback=0):number{const n=Number(value(node,name,String(fallback)));return Number.isFinite(n)?n:fallback;}
 function qualified(parent:XmlElement,name:string):string{const i=parent.name.indexOf(':');return i<0?name:parent.name.slice(0,i+1)+name;}
 function setCell(parent:XmlElement,name:string,v:string|number):void{let c=cells(parent).get(name);if(!c){c=element(qualified(parent,'Cell'),{N:name,V:String(v)});parent.children.unshift(c);}else{c.attributes['V']=String(v);delete c.attributes['F'];}}
-function section(node:XmlElement|undefined,name:string):XmlElement|undefined{return node?elements(node,'Section').find(s=>s.attributes['N']===name):undefined;}
+function section(node:XmlElement|undefined,name:string):XmlElement|undefined{return node?elements(node,'Section').find(s=>s.attributes['N']===name&&s.attributes['Del']!=='1'):undefined;}
 function numeric(value_:string|undefined,fallback:number):number{const n=Number(value_);return value_!==undefined&&Number.isFinite(n)?n:fallback;}
 function same(a:unknown,b:unknown):boolean{return JSON.stringify(a)===JSON.stringify(b);}
 export interface VisioReadOptions extends ZipLimits{allowMacroPreservation?:boolean}
@@ -57,17 +58,9 @@ interface ReadContext{
   colors:Map<string,string>;fonts:Map<string,string>;shapeSources:Map<string,ShapeSource>;pageSources:Map<string,PageSource>;
 }
 function diagnostic(ctx:ReadContext,code:string,message:string,part?:string,shapeId?:string):void{ctx.diagnostics.push({code,severity:'warning',message,part,shapeId});}
-function effectiveShape(source:XmlElement,master:XmlElement|undefined):XmlElement{
-  if(!master)return source;const direct=new Set(elements(source,'Cell').map(c=>c.attributes['N']));
-  const localSections=elements(source,'Section');const inheritedSections=elements(master,'Section').map(base=>{
-    const local=localSections.find(s=>s.attributes['N']===base.attributes['N']&&(s.attributes['IX']??'0')===(base.attributes['IX']??'0'));
-    if(!local)return base;const rows=elements(base,'Row').filter(r=>!elements(local,'Row').some(s=>s.attributes['IX']===r.attributes['IX']||(s.attributes['N']&&s.attributes['N']===r.attributes['N'])));return{...local,children:[...rows,...local.children]};
-  });
-  return{...source,attributes:{...master.attributes,...source.attributes},children:[...elements(master,'Cell').filter(c=>!direct.has(c.attributes['N'])),...source.children.filter(c=>!isElement(c)||localName(c.name)!=='Section'),...inheritedSections,...localSections.filter(s=>!elements(master,'Section').some(b=>b.attributes['N']===s.attributes['N']&&(b.attributes['IX']??'0')===(s.attributes['IX']??'0'))),...(!first(source,'Text')&&first(master,'Text')?[first(master,'Text')!]:[])]};
-}
-function inheritedStyle(ctx:ReadContext,node:XmlElement,role:'FillStyle'|'LineStyle'|'TextStyle'):XmlElement|undefined{
-  const style=ctx.styles.get(node.attributes[role]??'0');if(!style)return;let result=style,current=style;const seen=new Set<string>();
-  for(let i=0;i<32;i++){const parent=current.attributes[role];if(!parent||seen.has(parent)||!ctx.styles.has(parent))break;seen.add(parent);const base=ctx.styles.get(parent)!;result=effectiveShape(result,base);current=base;}return result;
+const effectiveShape=mergeVisioShape;
+function inheritedStyle(ctx:ReadContext,node:XmlElement,role:'FillStyle'|'LineStyle'|'TextStyle'):XmlElement|undefined {
+  return resolveVisioStyle(ctx.styles,node.attributes[role]??'0',role);
 }
 function resolveColor(ctx:ReadContext,input:string,fallback:string):string{const color=ctx.colors.get(input)??input;if(/^#[\da-fA-F]{6}$/.test(color)||/^#[\da-fA-F]{3}$/.test(color))return color;const rgb=color.match(/^RGB\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i);return rgb?'#'+rgb.slice(1).map(v=>Math.min(255,Number(v)).toString(16).padStart(2,'0')).join(''):fallback;}
 function readStyle(ctx:ReadContext,node:XmlElement,part:string,shapeId:string):ShapeStyle{
@@ -97,21 +90,22 @@ function readGeometry(ctx:ReadContext,node:XmlElement,width:number,height:number
   }
   const path=segments.join(' ');return path&&!path.startsWith('M')?`M 0 ${n(height)} ${path}`:path;
 }
-function readShape(ctx:ReadContext,source:XmlElement,pageId:string,part:string,parentHeight:number,inheritedMaster?:MasterXml,instanceScope?:string):Shape{
+function readShape(ctx:ReadContext,source:XmlElement,pageId:string,part:string,parentHeight:number,inheritedMaster?:MasterXml,instanceScope?:string,depth=0):Shape{
+  if(depth>64)throw new DrawingError('VISIO_INHERITANCE_DEPTH','Master instance nesting exceeds 64 levels.');
   const visioId=source.attributes['ID']??String(ctx.shapeSources.size+1),shapeId=instanceScope?`${instanceScope}:master-s${visioId}`:`${pageId}:s${visioId}`;
-  const master=ctx.masters.get(source.attributes['Master']??'')??inheritedMaster,masterShape=master?(source.attributes['MasterShape']?master.byId.get(source.attributes['MasterShape']):master.root):undefined;
+  const master=ctx.masters.get(source.attributes['Master']??'')??inheritedMaster,masterShape=master?(source.attributes['MasterShape']?master.byId.get(source.attributes['MasterShape']):source.attributes['Master']?master.root:undefined):undefined;
   const node=effectiveShape(source,masterShape),width=Math.max(0,numberCell(node,'Width',1.6666667)*96),height=Math.max(0,numberCell(node,'Height',0.7291667)*96);
   const pinX=numberCell(node,'PinX',width/192)*96,pinY=numberCell(node,'PinY',height/192)*96,locPinX=numberCell(node,'LocPinX',width/192)*96,locPinY=numberCell(node,'LocPinY',height/192)*96,angle=numberCell(node,'Angle'),flipX=numberCell(node,'FlipX')?-1:1,flipY=numberCell(node,'FlipY')?-1:1,c=Math.cos(angle),s=Math.sin(angle);
   const centerX=pinX+c*flipX*(width/2-locPinX)-s*flipY*(height/2-locPinY),centerY=parentHeight-pinY-s*flipX*(width/2-locPinX)-c*flipY*(height/2-locPinY);
-  const text=first(node,'Text'),hasChildren=!!first(source,'Shapes')||source.attributes['Type']==='Group';
+  const text=first(node,'Text'),hasChildren=!!first(source,'Shapes')||node.attributes['Type']==='Group'||!!(masterShape&&first(masterShape,'Shapes'));
   const shape=createShape(hasChildren?'group':'path',{id:shapeId,x:centerX-width/2,y:centerY-height/2,width,height,rotation:-angle,text:text?textContent(text):'',style:readStyle(ctx,node,part,shapeId),masterId:source.attributes['Master']?`master:${source.attributes['Master']}`:undefined});
   if(flipX<0||flipY<0)shape.transform=[flipX,0,0,flipY,flipX<0?width:0,flipY<0?height:0];
   shape.cells=Object.fromEntries([...cells(node)].map(([name,cell_])=>[name,{value:cell_.attributes['V']??'',formula:cell_.attributes['F'],unit:cell_.attributes['U']}]).filter(([name])=>!['__proto__','constructor','prototype'].includes(name as string)));
   shape.path=readGeometry(ctx,node,width,height,part,shapeId)||undefined;
   if(!shape.path&&!hasChildren){shape.kind=shape.text?'text':'rectangle';}
-  const properties=section(node,'Property');if(properties)for(const row of elements(properties,'Row')){let key=row.attributes['N']??value(row,'Label',`Property${row.attributes['IX']??''}`);if(['__proto__','constructor','prototype'].includes(key))key=`property_${key}`;const raw=value(row,'Value');const type=numberCell(row,'Type');shape.data[key]=type===2?numeric(raw,0):type===3?raw==='1'||raw.toLowerCase()==='true':raw.replace(/^"(.*)"$/s,'$1');}
+  const properties=section(node,'Property');if(properties)for(const row of elements(properties,'Row').filter(r=>r.attributes['Del']!=='1')){let key=row.attributes['N']??value(row,'Label',`Property${row.attributes['IX']??''}`);if(['__proto__','constructor','prototype'].includes(key))key=`property_${key}`;const raw=value(row,'Value');const type=numberCell(row,'Type');shape.data[key]=type===2?numeric(raw,0):type===3?raw==='1'||raw.toLowerCase()==='true':raw.replace(/^"(.*)"$/s,'$1');}
   const layer=value(node,'LayerMember');if(layer)shape.layerId=`layer:${layer.split(';')[0]}`;shape.locked=numberCell(node,'LockMoveX')===1&&numberCell(node,'LockMoveY')===1;
-  const connection=section(node,'Connection');if(connection)shape.ports=elements(connection,'Row').map((row,index)=>({id:row.attributes['N']??row.attributes['IX']??String(index),x:numberCell(row,'X')*96/Math.max(1,width),y:1-numberCell(row,'Y')*96/Math.max(1,height)}));
+  const connection=section(node,'Connection');if(connection)shape.ports=elements(connection,'Row').filter(r=>r.attributes['Del']!=='1').map((row,index)=>({id:row.attributes['N']??row.attributes['IX']??String(index),x:numberCell(row,'X')*96/Math.max(1,width),y:1-numberCell(row,'Y')*96/Math.max(1,height)}));
   const textMarkers=text?elements(text):[];
   readShapeExtensions(effectiveShape(node,inheritedStyle(ctx,node,'TextStyle')),shape,font=>ctx.fonts.get(font)??'Arial, sans-serif',input=>resolveColor(ctx,input,'#000000'),(code,message)=>diagnostic(ctx,code,message,part,shapeId));
   if(instanceScope)shape.sheetId=undefined; // Master-local IDs are not page-local Sheet.N references.
@@ -127,8 +121,13 @@ function readShape(ctx:ReadContext,source:XmlElement,pageId:string,part:string,p
     if(!shape.points?.length){shape.x=0;shape.y=0;shape.rotation=0;shape.transform=undefined;shape.points=[{x:numberCell(node,'BeginX')*96,y:parentHeight-numberCell(node,'BeginY')*96},{x:numberCell(node,'EndX',1)*96,y:parentHeight-numberCell(node,'EndY')*96}];}
   }
   if(!instanceScope)ctx.shapeSources.set(shapeId,{part,visioId,parentHeight,width,height,locPinX,locPinY,flipX,flipY,richText:!!textMarkers.length});
-  const children=first(source,'Shapes')??(hasChildren&&masterShape?first(masterShape,'Shapes'):undefined);
-  if(children)shape.children=elements(children,'Shape').map(child=>readShape(ctx,child,pageId,part,height,master,first(source,'Shapes')?undefined:shapeId));return shape;
+  const localChildren=first(source,'Shapes'),baseChildren=masterShape?first(masterShape,'Shapes'):undefined;
+  if(localChildren||baseChildren){
+    const locals=localChildren?elements(localChildren,'Shape'):[],bases=baseChildren?elements(baseChildren,'Shape'):[];
+    const inheritedChildren=bases.filter(child=>!locals.some(local=>local.attributes['MasterShape']===child.attributes['ID']));
+    shape.children=[...locals.filter(child=>child.attributes['Del']!=='1').map(child=>readShape(ctx,child,pageId,part,height,master,instanceScope,depth+1)),
+      ...inheritedChildren.filter(child=>child.attributes['Del']!=='1').map(child=>readShape(ctx,{...child,attributes:{...child.attributes,MasterShape:child.attributes['ID']!}},pageId,part,height,master,shapeId,depth+1))];
+  }return shape;
 }
 function makeContext(document:XmlElement):ReadContext{
   return{document,diagnostics:[],styles:new Map(elements(first(document,'StyleSheets')??element('none'),'StyleSheet').map(s=>[s.attributes['ID']??'',s])),masters:new Map(),colors:new Map([['0','#000000'],['1','#ffffff'],['2','#ff0000'],['3','#00ff00'],['4','#0000ff'],['5','#ffff00'],['6','#ff00ff'],['7','#00ffff'],...elements(first(document,'Colors')??element('none'),'ColorEntry').map(c=>[c.attributes['IX']??'',c.attributes['RGB']??'#000000'] as [string,string])]),fonts:new Map(elements(first(document,'FaceNames')??element('none'),'FaceName').map(f=>[f.attributes['ID']??'',f.attributes['NameU']??f.attributes['Name']??'Arial'])),shapeSources:new Map(),pageSources:new Map()};
@@ -314,6 +313,7 @@ export async function writeVsdx(document:DiagramDocument,options:VisioExportOpti
   };
   document.pages.forEach((page,i)=>packageImages(page,pages[i]!,`image-${i}`));
   if(document.dataGraphics?.length)exportDiagnostic(options,'DATA_GRAPHICS_MODEL_ONLY','Data-graphic rules are native DrawingWeb model features. This Visio profile exports base shapes, not Visio data-graphic masters. Use SVG/PNG for the evaluated visual representation.');
+  if(document.pages.some(p=>engineShapes(p).some(s=>s.masterBinding)))exportDiagnostic(options,'MASTER_INHERITANCE_FLATTENED','Live DrawingWeb master channels are exported as cached local shapes. Use JSON to retain live instance bindings; this writer does not reconstruct native inheritance overrides.');
   if(document.theme)exportDiagnostic(options,'THEME_FLATTENED','DrawingWeb theme tokens are exported as resolved shape colors and fonts, not a native Visio quick-style theme.');
   if(document.pages.some(p=>p.guides?.x.length||p.guides?.y.length))exportDiagnostic(options,'GUIDES_MODEL_ONLY','Workspace guides are not emitted as native Visio guide shapes.');
   put('docProps/core.xml',element('cp:coreProperties',{'xmlns:cp':'http://schemas.openxmlformats.org/package/2006/metadata/core-properties','xmlns:dc':'http://purl.org/dc/elements/1.1/'},[element('dc:title',{},[document.title]),element('dc:creator',{},['DrawingWeb'])]));put('docProps/app.xml',element('Properties',{xmlns:'http://schemas.openxmlformats.org/officeDocument/2006/extended-properties'},[element('Application',{},['DrawingWeb']),element('AppVersion',{},['0.1'])]));

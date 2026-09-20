@@ -76,6 +76,10 @@ jobs:
           mkdir -p artifacts/qualification
           npm run check > artifacts/qualification/native.log 2>&1 || { cat artifacts/qualification/native.log; exit 1; }
           tail -n 25 artifacts/qualification/native.log
+      - name: Compile optional desktop adapter and exercise non-native help
+        run: |
+          dotnet build tools/DrawingWeb.VisioDesktop/DrawingWeb.VisioDesktop.csproj -c Release
+          dotnet run --project tools/DrawingWeb.VisioDesktop/DrawingWeb.VisioDesktop.csproj -c Release --no-build -- --help
       - name: Pack multi-target self-contained Blazor library
         run: dotnet pack blazor/DrawingWeb.Blazor/DrawingWeb.Blazor.csproj -c Release -p:RepositoryCommit=${{ github.sha }} -p:RepositoryBranch=${{ github.ref_name }} -o artifacts/nuget
       - run: python scripts/verify-nuget.py
@@ -89,7 +93,9 @@ jobs:
         run: |
           dotnet publish blazor/samples/Server/DrawingWeb.ServerSample.csproj -c Release -f net10.0 -o artifacts/server
           dotnet publish blazor/samples/WebAssembly/DrawingWeb.WebAssemblySample.csproj -c Release -o artifacts/wasm
-      - run: python -m pip install --quiet playwright==1.57.0
+      - run: python -m pip install --quiet playwright==1.57.0 Pillow==12.3.0
+      - name: Pixel-comparison regression tests
+        run: python tests/compare_png_test.py
       - name: Install Chromium
         run: python -m playwright install --with-deps chromium > /tmp/drawingweb-browser-install.log 2>&1 || { tail -n 80 /tmp/drawingweb-browser-install.log; exit 1; }
       - name: Browser editor, HTTP modules and IndexedDB tests

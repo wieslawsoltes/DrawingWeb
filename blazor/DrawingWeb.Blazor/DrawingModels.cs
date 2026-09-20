@@ -52,6 +52,7 @@ public sealed record DrawingShape
     public bool? Locked { get; set; }
     public bool? Visible { get; set; }
     public string? MasterId { get; set; }
+    public DrawingMasterBinding? MasterBinding { get; set; }
     public Dictionary<string, JsonElement> Data { get; init; } = [];
     public Dictionary<string, DrawingCell> Cells { get; init; } = [];
     public List<DrawingPort> Ports { get; init; } = [];
@@ -141,6 +142,9 @@ public sealed record DrawingImport(long Revision, List<DrawingDiagnostic> Diagno
 [JsonSerializable(typeof(DrawingTextRun))]
 [JsonSerializable(typeof(DrawingRunStyle))]
 [JsonSerializable(typeof(DrawingTextField))]
+[JsonSerializable(typeof(DrawingMasterBinding))]
+[JsonSerializable(typeof(DrawingMasterChannels))]
+[JsonSerializable(typeof(DrawingMasterPatch))]
 [JsonSerializable(typeof(DrawingTextBlock))]
 [JsonSerializable(typeof(DrawingContainer))]
 [JsonSerializable(typeof(DrawingContainerOptions))]

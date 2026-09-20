@@ -117,11 +117,27 @@
             await _editor.LinkDataAsync(calloutId, new DrawingDataLink { RecordsetId = set.Id, RowKey = rowKey.RootElement.Clone(), Mappings = new() { ["text"] = "label" } });
             var linked = await _editor.GetDocumentAsync();
             if (linked.Pages.SelectMany(p => p.Shapes).First(s => s.Id == calloutId).Text != "Linked from typed .NET recordset") throw new Exception("Typed keyed recordset projection failed.");
-            var masterId = await _editor.RegisterMasterAsync("Reusable", ".NET", new DrawingShape { Text = "From NuGet" });
+            var masterShape = new DrawingShape { Text = "From NuGet" };
+            var masterId = await _editor.RegisterMasterAsync("Reusable", ".NET", masterShape);
+            var instance = await _editor.InsertMasterAsync(masterId, 100, 100);
+            await _editor.UpdateMasterAsync(masterId, new DrawingMasterPatch { Shape = masterShape with { Text = "Live definition" } });
+            // Updating a definition must preserve its source shape identity.
+            var inherited = (await _editor.GetDocumentAsync()).Pages.SelectMany(p => p.Shapes).First(s => s.Id == instance);
+            if (inherited.Text != "Live definition" || inherited.MasterBinding is null) throw new Exception("Live master inheritance failed.");
+            await _editor.DetachMasterAsync(instance);
+            await _editor.SetRichTextAsync(instance, new DrawingRichText { Paragraphs = [new DrawingTextParagraph { Runs = [new DrawingTextRun { Text = "cached", Field = new DrawingTextField { Formula = "PAGENAME()" } }] }] });
+            await _editor.ActivateTextFieldsAsync([instance]);
+            var fieldDocument = await _editor.GetDocumentAsync();
+            if (fieldDocument.Pages.SelectMany(p => p.Shapes).First(s => s.Id == instance).Text != fieldDocument.Pages[0].Name) throw new Exception("Live field did not evaluate in trimmed host.");
+            await _editor.SetCellAsync(instance, "User.Size", zero.RootElement, "2");
+            await _editor.SetCellAsync(instance, "Width", zero.RootElement, "SETATREF(User.Size)");
+            await _editor.SetUserCellValueAsync(instance, "Width", 3);
+            if ((await _editor.GetDocumentAsync()).Pages.SelectMany(p => p.Shapes).First(s => s.Id == instance).Width != 288) throw new Exception("SETATREF interop write failed.");
+            await _editor.DeactivateTextFieldsAsync(); await _editor.DeactivateShapeSheetAsync();
             var stencil = await _editor.ExportAsync("vssx");
             if (stencil.Bytes.Length < 100 || stencil.Bytes[0] != 80) throw new Exception("Stencil package export failed.");
             await _editor.DisbandContainerAsync(containerId);
-            _testResult = "PASS — initialization, typed binding, undo/redo, command patches, selection, VSDX/SVG streams, typed rows, JSON import, containers, rich text, ShapeSheet, comments, keyed recordsets and stencil export.";
+            _testResult = "PASS — initialization, typed binding, undo/redo, command patches, selection, VSDX/SVG streams, typed rows, JSON import, containers, rich text, ShapeSheet, comments, keyed recordsets, stencil export, live master inheritance, native text fields and SETATREF writes.";
         }
         catch (Exception error) { _testResult = "FAIL — " + error.Message; }
         finally { _testing = false; }

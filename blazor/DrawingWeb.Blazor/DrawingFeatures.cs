@@ -38,10 +38,34 @@ public sealed record DrawingRunStyle : DrawingFeature
     public bool? Underline { get; set; }
     public bool? Strike { get; set; }
 }
+/// <summary>Live master channels; geometry remains local. Removing a channel creates a local override.</summary>
+public sealed record DrawingMasterBinding : DrawingFeature
+{
+    public string SourceShapeId { get; set; } = "";
+    public List<string> Style { get; set; } = [];
+    public List<string> Cells { get; set; } = [];
+    public bool Text { get; set; } = true;
+}
+/// <summary>Omitted lists do not restore channels. Omit the entire argument to restore all channels.</summary>
+public sealed record DrawingMasterChannels : DrawingFeature
+{
+    public List<string>? Style { get; set; }
+    public List<string>? Cells { get; set; }
+    public bool? Text { get; set; }
+}
+public sealed record DrawingMasterPatch : DrawingFeature
+{
+    public string? Name { get; set; }
+    public string? Category { get; set; }
+    public DrawingShape? Shape { get; set; }
+}
 public sealed record DrawingTextField : DrawingFeature
 {
     public string Formula { get; set; } = "";
     public string? Format { get; set; }
+    public string? NativeFormat { get; set; }
+    public string? Value { get; set; }
+    public string? Unit { get; set; }
 }
 public sealed record DrawingTextBlock : DrawingFeature
 {
